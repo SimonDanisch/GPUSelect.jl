@@ -11,7 +11,7 @@ Supports **CUDA**, **AMDGPU**, **Metal** (Apple Silicon), **oneAPI** (Intel), an
 > Libraries should accept a backend as a parameter and let the caller decide, using
 > [KernelAbstractions.jl](https://github.com/JuliaGPU/KernelAbstractions.jl) or
 > [GPUArrays.jl](https://github.com/JuliaGPU/GPUArrays.jl) abstractions directly.
-> GPUSelect can be appropriate for library *defaults* though:
+> GPUSelect *could* be appropriate for library defaults though, but still needs some more discussion if that's a good idea:
 >
 > ```julia
 > function my_kernel_runner(data; backend = GPUSelect.Backend())
@@ -31,10 +31,12 @@ GPUSelect.auto_install!()          # e.g. installs AMDGPU on an AMD machine
 
 # 3. In every script
 using GPUSelect
+# These directly return the types from the backend
 backend = GPUSelect.Backend()      # ROCBackend() / CUDABackend() / CPU() / …
 AT      = GPUSelect.Storage()      # ROCArray     / CuArray       / Array  / …
 
 x = AT{Float32}(undef, 1024)      # allocate on the right device
+y = adapt(backend, rand(4, 4))    # backend/storage work with adapt
 ```
 
 ## API
@@ -62,7 +64,7 @@ Both `Backend` and `Storage` accept:
 
 - `fallback=true`: silently return `CPU()` / `Array` and emit a warning when the backend is unavailable (default: `true`).
 - `fallback=false`: error instead of falling back.
-- `install=true`: call `auto_install!()` automatically if no backend is found.
+- `install=true`: **EXPERIMENTAL**, call `auto_install!()` automatically if no backend is found. Still needs some investigation if this is a good idea!
 
 > **`Backend()` / `Storage()` do not auto-install by default.** The `install` keyword
 > defaults to `get_install_preference()`, which is `false` unless you opt in once with
