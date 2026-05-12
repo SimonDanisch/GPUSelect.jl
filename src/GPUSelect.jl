@@ -66,9 +66,9 @@ end
 
 Load and return the module for the given backend target.
 
-- `:GPU`  — loads the first available native GPU backend (CUDA, AMDGPU, Metal, oneAPI).
-             When multiple are installed, prefers the one `find_gpu_pkgid()` recommends.
-- `:Lava` — loads Lava.
+- `:GPU`: loads the first available native GPU backend (CUDA, AMDGPU, Metal, oneAPI).
+          When multiple are installed, prefers the one `find_gpu_pkgid()` recommends.
+- `:Lava`: loads Lava.
 
 Errors if the requested backend is not installed in the active project.
 """
@@ -118,15 +118,17 @@ function Backend end
 
 Return a KernelAbstractions backend for the given target.
 
-- `:CPU`  — always returns `KernelAbstractions.CPU()`, no package needed.
-- `:GPU`  — loads and returns the native GPU backend (CUDA, AMDGPU, Metal, or oneAPI).
-             Falls back to `CPU()` with a warning when `fallback=true`.
-- `:Lava` — loads and returns the Lava (Vulkan) backend. On systems without a hardware
-             Vulkan GPU, Lava itself may fall back to lavapipe. Falls back to `CPU()` if
-             Lava is unavailable.
+- `:CPU`: always returns `KernelAbstractions.CPU()`, no package needed.
+- `:GPU`: loads and returns the native GPU backend (CUDA, AMDGPU, Metal, or oneAPI).
+          Falls back to `CPU()` with a warning when `fallback=true`.
+- `:Lava`: loads and returns the Lava (Vulkan) backend. On systems without a hardware
+           Vulkan GPU, Lava itself may fall back to lavapipe. Falls back to `CPU()` if
+           Lava is unavailable.
 
-When `install=true` (or set globally via `set_install_preference!(true)`), calls
-`auto_install!()` automatically if no matching backend is found in the active project.
+**`Backend()` never auto-installs a package by default.** If no matching backend is
+present in the active project, it errors (or falls back to CPU when `fallback=true`).
+Pass `install=true` explicitly, or opt in once per environment with
+`set_install_preference!(true)`, to have `auto_install!()` run automatically.
 """
 function Backend(target::Symbol = :GPU; fallback::Bool = true, install::Bool = get_install_preference())
     T = get_backend_func(target, BACKEND_CONSTRUCTOR, install, fallback)
@@ -140,12 +142,15 @@ function Storage end
 
 Return the array type for the given target.
 
-- `:CPU`  — returns `Array`.
-- `:GPU`  — returns the native GPU array type (`CuArray`, `ROCArray`, `MtlArray`, or `oneArray`).
-- `:Lava` — returns `LavaArray`.
+- `:CPU`: returns `Array`.
+- `:GPU`: returns the native GPU array type (`CuArray`, `ROCArray`, `MtlArray`, or `oneArray`).
+- `:Lava`: returns `LavaArray`.
 
 Falls back to `Array` with a warning when `fallback=true` and the backend is unavailable.
 Use with `adapt` or allocate directly: `Storage()(undef, 1024)`.
+
+Like `Backend`, `Storage()` does not auto-install by default. Pass `install=true` or
+set `set_install_preference!(true)` to opt in.
 """
 function Storage(target::Symbol = :GPU; fallback::Bool = true, install::Bool = get_install_preference())
     get_backend_func(target, STORAGE_TYPE, install, fallback)
@@ -244,7 +249,7 @@ Prints a human-readable report and returns `true` if all attempted loads succeed
 function test_backends()::Bool
     bar = "─" ^ 60
     println("\n$bar")
-    println("  GPUSelect — Backend Test")
+    println("  GPUSelect: Backend Test")
     println("  $(Sys.iswindows() ? "Windows" : Sys.isapple() ? "macOS" : "Linux") / $(Sys.ARCH)")
     println(bar)
 
@@ -269,7 +274,7 @@ function test_backends()::Bool
     ok = true
     for (label, r) in sort(collect(results); by=first)
         if r isa Exception
-            println("  :$label  FAILED — $r")
+            println("  :$label  FAILED: $r")
             ok = false
         else
             println("  :$label  Backend=$(r.backend)  Storage=$(r.storage)")

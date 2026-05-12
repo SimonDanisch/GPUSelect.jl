@@ -52,7 +52,7 @@ end
         @test GPUSelect.Backend(:CPU; install=false) isa KA.CPU
     end
 
-    @testset "Backend — unknown target always throws" begin
+    @testset "Backend: unknown target always throws" begin
         @test_throws Exception GPUSelect.Backend(:Vulkan)
         @test_throws Exception GPUSelect.Backend(:CUDA)
     end
@@ -87,7 +87,7 @@ end
         @info "Backend(:Lava) → $(typeof(b))  [Lava $(lava_installed ? "installed" : "not installed")]"
     end
 
-    @testset "Computation — Backend()" begin
+    @testset "Computation: Backend()" begin
         bs = GPUSelect.installed_backends()
         gpu_installed = any(n -> n ∈ GPUSelect.GPU_BACKENDS, bs)
         if gpu_installed
@@ -96,11 +96,11 @@ end
             @test run_fill_test(backend, AT)
             @info "Backend() computation ✓  $(typeof(backend))"
         else
-            @info "Backend() computation skipped — no GPU backend installed"
+            @info "Backend() computation skipped, no GPU backend installed"
         end
     end
 
-    @testset "Computation — Backend(:Lava)" begin
+    @testset "Computation: Backend(:Lava)" begin
         bs = GPUSelect.installed_backends()
         if "Lava" ∈ bs
             backend = GPUSelect.Backend(:Lava)
@@ -108,7 +108,7 @@ end
             @test run_fill_test(backend, AT)
             @info "Backend(:Lava) computation ✓  $(typeof(backend))"
         else
-            @info "Backend(:Lava) computation skipped — Lava not installed"
+            @info "Backend(:Lava) computation skipped, Lava not installed"
         end
     end
 

@@ -6,7 +6,7 @@ gives every script a one-liner to load it.
 
 Supports **CUDA**, **AMDGPU**, **Metal** (Apple Silicon), **oneAPI** (Intel), and **Lava** (Vulkan).
 
-> **Intended for scripts, benchmarks, and applications — not libraries.**
+> **Intended for scripts, benchmarks, and applications, not libraries.**
 >
 > Libraries should accept a backend as a parameter and let the caller decide, using
 > [KernelAbstractions.jl](https://github.com/JuliaGPU/KernelAbstractions.jl) or
@@ -53,16 +53,21 @@ x = AT{Float32}(undef, 1024)      # allocate on the right device
 | Call | Returns |
 |---|---|
 | `Backend()` | `KernelAbstractions.Backend` instance for the detected GPU. |
-| `Backend(:CPU)` | `KernelAbstractions.CPU()` — always works, no package needed. |
-| `Backend(:Lava)` | `LavaBackend()` — Vulkan backend; falls back to lavapipe when no discrete GPU. |
+| `Backend(:CPU)` | `KernelAbstractions.CPU()`, always works, no package needed. |
+| `Backend(:Lava)` | `LavaBackend()`. Vulkan backend; falls back to lavapipe when no discrete GPU. |
 | `Storage()` | The GPU array type (`ROCArray`, `CuArray`, …). |
 | `Storage(:CPU)` | `Array`. |
 
 Both `Backend` and `Storage` accept:
 
-- `fallback=true` — silently return `CPU()` / `Array` and emit a warning when the backend is unavailable (default: `true`).
-- `fallback=false` — error instead of falling back.
-- `install=true` — call `auto_install!()` automatically if no backend is found (default: value of `get_install_preference()`).
+- `fallback=true`: silently return `CPU()` / `Array` and emit a warning when the backend is unavailable (default: `true`).
+- `fallback=false`: error instead of falling back.
+- `install=true`: call `auto_install!()` automatically if no backend is found.
+
+> **`Backend()` / `Storage()` do not auto-install by default.** The `install` keyword
+> defaults to `get_install_preference()`, which is `false` unless you opt in once with
+> `GPUSelect.set_install_preference!(true)`. Until then, missing backends produce an
+> error (or a fallback to CPU when `fallback=true`), never an implicit `Pkg.add`.
 
 ### Hardware detection
 
@@ -72,7 +77,7 @@ GPUSelect.installed_backends() # -> Vector{String} from the active manifest
 ```
 
 Detection probes driver shared libraries (`libcuda`, `libamdhip64`, `libze_loader`, `libvulkan`, …)
-via `Libdl` — no `nvidia-smi` / `rocm-smi` required, works on Windows, Linux, and macOS.
+via `Libdl`, with no `nvidia-smi` / `rocm-smi` required, and works on Windows, Linux, and macOS.
 
 ### Verification
 
@@ -84,7 +89,7 @@ Prints a live report from the calling environment:
 
 ```
 ────────────────────────────────────────────────────────────
-  GPUSelect — Backend Test
+  GPUSelect: Backend Test
   Linux / x86_64
 ────────────────────────────────────────────────────────────
   Detected hardware:  AMDGPU
