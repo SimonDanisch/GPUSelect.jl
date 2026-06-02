@@ -217,6 +217,21 @@ function installed_backends()::Vector{String}
 end
 
 """
+    available_backends() -> Vector{Symbol}
+
+Backend targets selectable in the active project, in the form accepted by [`Backend`](@ref):
+always `:CPU`; `:GPU` when a native GPU backend (CUDA/AMDGPU/Metal/oneAPI) is present in the
+manifest; `:Lava` when Lava is present. Reads the manifest only, so no loading happens.
+"""
+function available_backends()::Vector{Symbol}
+    installed = installed_backends()
+    targets = Symbol[:CPU]
+    any(b -> b in GPU_BACKENDS, installed) && push!(targets, :GPU)
+    "Lava" in installed && push!(targets, :Lava)
+    return targets
+end
+
+"""
     auto_install!(; force=false)
 
 Detect the GPU on this machine and `Pkg.add` the matching backend into the active
