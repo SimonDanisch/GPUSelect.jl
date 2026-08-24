@@ -2,7 +2,7 @@
 
 julia_version = "1.12.6"
 manifest_format = "2.0"
-project_hash = "f26ab46c0bd4bb9114defb7548b286dc7f1ae6ce"
+project_hash = "622fd63e609455722a05b464346ea32dcc6d3d3e"
 
 [[deps.Adapt]]
 deps = ["LinearAlgebra", "Requires"]
@@ -68,22 +68,10 @@ uuid = "7b1f6079-737a-58dc-b8bc-7a2ca5c1b5ee"
 version = "1.11.0"
 
 [[deps.GPUSelect]]
-deps = ["Adapt", "KernelAbstractions", "Libdl", "Pkg", "Preferences", "TOML"]
+deps = ["Adapt", "KernelAbstractions", "Libdl", "Pkg", "Preferences"]
 path = "."
 uuid = "203851ad-5791-4cf9-9fcc-5933b5611f42"
-version = "0.1.0"
-
-    [deps.GPUSelect.extensions]
-    AMDGPUExt = "AMDGPU"
-    CUDAExt = "CUDA"
-    MetalExt = "Metal"
-    oneAPIExt = "oneAPI"
-
-    [deps.GPUSelect.weakdeps]
-    AMDGPU = "21141c5a-9bdb-4563-92ae-f87d6854732e"
-    CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
-    Metal = "dde4c033-4e86-420c-a63e-0dd931031962"
-    oneAPI = "8f75cd03-7ff8-4ecb-9b8f-daf728133b1b"
+version = "0.1.1"
 
 [[deps.InteractiveUtils]]
 deps = ["Markdown"]

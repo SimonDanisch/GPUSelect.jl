@@ -38,6 +38,49 @@ end
         @info "installed_backends → $(isempty(bs) ? "none" : join(bs, ", "))"
     end
 
+    # A workspace member project has no Manifest.toml of its own: the manifest lives
+    # at the workspace root. Backends listed there must still be found.
+    if isdefined(Base, :base_project)  # Pkg workspaces, Julia 1.12+
+        @testset "installed_backends in a workspace" begin
+            mktempdir() do dir
+                ws = joinpath(dir, "ws")
+                sub, fake = joinpath(ws, "sub"), joinpath(ws, "FakeGPU")
+                mkpath(joinpath(sub, "src"))
+                mkpath(joinpath(fake, "src"))
+                uuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+                write(joinpath(fake, "Project.toml"),
+                      "name = \"FakeGPU\"\nuuid = \"$uuid\"\nversion = \"0.1.0\"\n")
+                write(joinpath(fake, "src", "FakeGPU.jl"), "module FakeGPU end\n")
+                write(joinpath(ws, "Project.toml"), "[workspace]\nprojects = [\"sub\"]\n")
+                write(joinpath(ws, "Manifest.toml"),
+                      """
+                      julia_version = "$VERSION"
+                      manifest_format = "2.0"
+
+                      [[deps.FakeGPU]]
+                      path = "FakeGPU"
+                      uuid = "$uuid"
+                      version = "0.1.0"
+                      """)
+                write(joinpath(sub, "Project.toml"),
+                      "name = \"SubApp\"\nuuid = \"11111111-2222-3333-4444-555555555555\"\n" *
+                      "version = \"0.1.0\"\n\n[deps]\nFakeGPU = \"$uuid\"\n")
+                write(joinpath(sub, "src", "SubApp.jl"), "module SubApp end\n")
+
+                old = Base.active_project()
+                GPUSelect.BACKENDS["FakeGPU"] = Base.UUID(uuid)
+                try
+                    Base.set_active_project(joinpath(sub, "Project.toml"))
+                    @test !isfile(joinpath(sub, "Manifest.toml"))
+                    @test "FakeGPU" ∈ GPUSelect.installed_backends()
+                finally
+                    Base.set_active_project(old)
+                    delete!(GPUSelect.BACKENDS, "FakeGPU")
+                end
+            end
+        end
+    end
+
     @testset "Preferences" begin
         @test GPUSelect.get_install_preference() isa Bool
         GPUSelect.set_backend!("CUDA")
