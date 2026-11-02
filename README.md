@@ -4,7 +4,8 @@ GPU backend selection for [KernelAbstractions.jl](https://github.com/JuliaGPU/Ke
 Detects hardware via driver libraries (no CLI tools required), installs the right backend once, and
 gives every script a one-liner to load it.
 
-Supports **CUDA**, **AMDGPU**, **Metal** (Apple Silicon), **oneAPI** (Intel), and **Lava** (Vulkan).
+Supports **CUDA**, **AMDGPU**, **Metal** (Apple Silicon), **oneAPI** (Intel), **Lava** (Vulkan) and
+**Mantle** (Vulkan, or Metal on macOS).
 
 > **Intended for scripts, benchmarks, and applications, not libraries.**
 >
@@ -57,6 +58,7 @@ y = adapt(backend, rand(4, 4))    # backend/storage work with adapt
 | `Backend()` | `KernelAbstractions.Backend` instance for the detected GPU. |
 | `Backend(:CPU)` | `KernelAbstractions.CPU()`, always works, no package needed. |
 | `Backend(:Lava)` | `LavaBackend()`. Vulkan backend; falls back to lavapipe when no discrete GPU. |
+| `Backend(:Mantle)` | `Mantle.defaultbackend()`: the best GPU Mantle sees, or the one picked with `Mantle.defaultdevice!("NVIDIA")`. |
 | `Storage()` | The GPU array type (`ROCArray`, `CuArray`, …). |
 | `Storage(:CPU)` | `Array`. |
 
@@ -119,4 +121,5 @@ When multiple backends are installed, `Backend()` prefers the one `find_gpu_pkgi
 | `:GPU` (Metal) | [Metal.jl](https://github.com/JuliaGPU/Metal.jl) | `MtlArray` | Apple Silicon |
 | `:GPU` (oneAPI) | [oneAPI.jl](https://github.com/JuliaGPU/oneAPI.jl) | `oneArray` | Intel |
 | `:Lava` | [Lava.jl](https://github.com/JuliaGPU/Lava.jl) | `LavaArray` | Vulkan; falls back to lavapipe |
+| `:Mantle` | Mantle.jl | `LavaArray` | Vulkan on every GPU vendor, Metal on macOS; needs a display, since it loads GLFW |
 | `:CPU` | KernelAbstractions | `Array` | Always available |
