@@ -72,19 +72,18 @@ end
         @info "Backend(:GPU) → $(typeof(b))  [GPU $(gpu_installed ? "installed" : "not installed")]"
     end
 
-    @testset "Backend(:Lava)" begin
-        bs = GPUSelect.installed_backends()
-        lava_installed = "Lava" ∈ bs
-        b = GPUSelect.Backend(:Lava; fallback=true)
+    @testset "Backend(:$target)" for (target, name) in GPUSelect.TARGET_PACKAGE
+        installed = name ∈ GPUSelect.installed_backends()
+        b = GPUSelect.Backend(target; fallback=true)
         @test b isa KA.Backend
-        if lava_installed
+        if installed
             @test !(b isa KA.CPU)
-            @test GPUSelect.Backend(:Lava; fallback=false) isa KA.Backend
+            @test GPUSelect.Backend(target; fallback=false) isa KA.Backend
         else
             @test b isa KA.CPU
-            @test_throws Exception GPUSelect.Backend(:Lava; fallback=false)
+            @test_throws Exception GPUSelect.Backend(target; fallback=false)
         end
-        @info "Backend(:Lava) → $(typeof(b))  [Lava $(lava_installed ? "installed" : "not installed")]"
+        @info "Backend(:$target) → $(typeof(b))  [$name $(installed ? "installed" : "not installed")]"
     end
 
     @testset "Computation: Backend()" begin
@@ -100,15 +99,22 @@ end
         end
     end
 
-    @testset "Computation: Backend(:Lava)" begin
-        bs = GPUSelect.installed_backends()
-        if "Lava" ∈ bs
-            backend = GPUSelect.Backend(:Lava)
-            AT      = GPUSelect.Storage(:Lava)
+    @testset "Computation: Backend(:$target)" for (target, name) in GPUSelect.TARGET_PACKAGE
+        if name ∈ GPUSelect.installed_backends()
+            backend = GPUSelect.Backend(target)
+            AT      = GPUSelect.Storage(target)
             @test run_fill_test(backend, AT)
-            @info "Backend(:Lava) computation ✓  $(typeof(backend))"
+            @info "Backend(:$target) computation ✓  $(typeof(backend))"
         else
-            @info "Backend(:Lava) computation skipped, Lava not installed"
+            @info "Backend(:$target) computation skipped, $name not installed"
+        end
+    end
+
+    @testset "available_backends" begin
+        targets = GPUSelect.available_backends()
+        @test first(targets) === :CPU
+        for (target, name) in GPUSelect.TARGET_PACKAGE
+            @test (target ∈ targets) == (name ∈ GPUSelect.installed_backends())
         end
     end
 

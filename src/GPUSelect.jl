@@ -11,11 +11,25 @@ const BACKENDS = Dict{String,Base.UUID}(
     "CUDA"   => Base.UUID("052768ef-5323-5732-b1bb-66c8b64840ba"),
     "AMDGPU" => Base.UUID("21141c5a-9bdb-4563-92ae-f87d6854732e"),
     "Lava"   => Base.UUID("3a680b1f-cb25-4bee-9cf7-bc880b76dc8c"),
+    "Mantle" => Base.UUID("8f4c1f2e-6a3d-4b71-9c05-2e7d8a1b6f34"),
     "Metal"  => Base.UUID("dde4c033-4e86-420c-a63e-0dd931031962"),
     "oneAPI" => Base.UUID("8f75cd03-7ff8-4ecb-9b8f-daf728133b1b"),
 )
 
 const GPU_BACKENDS = ("CUDA", "AMDGPU", "Metal", "oneAPI")
+
+"""
+    TARGET_PACKAGE
+
+Targets that name exactly one backend package, mapped to that package: `:Lava` and
+`:Mantle`. `:CPU` needs no package and `:GPU` picks among `GPU_BACKENDS`.
+"""
+const TARGET_PACKAGE = Dict{Symbol,String}(
+    :Lava   => "Lava",
+    :Mantle => "Mantle",
+)
+
+const TARGETS = "Use :CPU, :GPU, :Lava or :Mantle."
 
 const BACKEND_CONSTRUCTOR = Dict{String,Symbol}(
     "KernelAbstractions" => :CPU,
@@ -24,6 +38,9 @@ const BACKEND_CONSTRUCTOR = Dict{String,Symbol}(
     "Metal"              => :MetalBackend,
     "oneAPI"             => :oneAPIBackend,
     "Lava"               => :LavaBackend,
+    # Mantle hands out the backend of its default device rather than a type to call:
+    # which device that is depends on the machine and on `Mantle.defaultdevice!`.
+    "Mantle"             => :defaultbackend,
 )
 
 const STORAGE_TYPE = Dict{String,Symbol}(
@@ -33,6 +50,7 @@ const STORAGE_TYPE = Dict{String,Symbol}(
     "Metal"              => :MtlArray,
     "oneAPI"             => :oneArray,
     "Lava"               => :LavaArray,
+    "Mantle"             => :LavaArray,
 )
 
 """
@@ -69,6 +87,7 @@ Load and return the module for the given backend target.
 - `:GPU`: loads the first available native GPU backend (CUDA, AMDGPU, Metal, oneAPI).
           When multiple are installed, prefers the one `find_gpu_pkgid()` recommends.
 - `:Lava`: loads Lava.
+- `:Mantle`: loads Mantle, which runs on Vulkan (and on Metal on macOS).
 
 Errors if the requested backend is not installed in the active project.
 """
@@ -82,18 +101,20 @@ function current_backend_module(target::Symbol)::Module
         detected = find_gpu_pkgid()
         name = detected !== nothing && detected.name ∈ found ? detected.name : first(found)
         return Base.require(Base.PkgId(BACKENDS[name], name))
-    elseif target === :Lava
-        "Lava" ∈ installed_backends() ||
-            error("Lava is not installed. Run Pkg.add(\"Lava\") first.")
-        return Base.require(Base.PkgId(BACKENDS["Lava"], "Lava"))
     end
-    error("Unknown target :$target. Use :GPU, :CPU, or :Lava.")
+    name = get(TARGET_PACKAGE, target) do
+        error("Unknown target :$target. $TARGETS")
+    end
+    name ∈ installed_backends() ||
+        error("$name is not installed. Add it to the active project first.")
+    return Base.require(Base.PkgId(BACKENDS[name], name))
 end
 
-function get_backend_func(target::Symbol, table::Dict{String,Symbol}, install::Bool, fallback::Bool)::Type
-    target ∈ (:CPU, :GPU, :Lava) || error("Unknown target :$target. Use :GPU, :CPU, or :Lava.")
+function get_backend_func(target::Symbol, table::Dict{String,Symbol}, install::Bool, fallback::Bool)
+    target === :CPU || target === :GPU || haskey(TARGET_PACKAGE, target) ||
+        error("Unknown target :$target. $TARGETS")
     if install && target !== :CPU
-        needed = target === :Lava ? ("Lava",) : GPU_BACKENDS
+        needed = target === :GPU ? GPU_BACKENDS : (TARGET_PACKAGE[target],)
         if !any(n -> n ∈ needed, installed_backends())
             auto_install!()
         end
@@ -124,6 +145,10 @@ Return a KernelAbstractions backend for the given target.
 - `:Lava`: loads and returns the Lava (Vulkan) backend. On systems without a hardware
            Vulkan GPU, Lava itself may fall back to lavapipe. Falls back to `CPU()` if
            Lava is unavailable.
+- `:Mantle`: loads Mantle and returns `Mantle.defaultbackend()`, the backend of its
+             default device: the best Vulkan GPU, or the device chosen with
+             `Mantle.defaultdevice!("NVIDIA")`. Falls back to `CPU()` if Mantle is
+             unavailable.
 
 **`Backend()` never auto-installs a package by default.** If no matching backend is
 present in the active project, it errors (or falls back to CPU when `fallback=true`).
@@ -131,8 +156,8 @@ Pass `install=true` explicitly, or opt in once per environment with
 `set_install_preference!(true)`, to have `auto_install!()` run automatically.
 """
 function Backend(target::Symbol = :GPU; fallback::Bool = true, install::Bool = get_install_preference())
-    T = get_backend_func(target, BACKEND_CONSTRUCTOR, install, fallback)
-    return Base.invokelatest(T)
+    constructor = get_backend_func(target, BACKEND_CONSTRUCTOR, install, fallback)
+    return Base.invokelatest(constructor)
 end
 
 function Storage end
@@ -145,6 +170,7 @@ Return the array type for the given target.
 - `:CPU`: returns `Array`.
 - `:GPU`: returns the native GPU array type (`CuArray`, `ROCArray`, `MtlArray`, or `oneArray`).
 - `:Lava`: returns `LavaArray`.
+- `:Mantle`: returns Mantle's `LavaArray`.
 
 Falls back to `Array` with a warning when `fallback=true` and the backend is unavailable.
 Use with `adapt` or allocate directly: `Storage()(undef, 1024)`.
@@ -152,7 +178,7 @@ Use with `adapt` or allocate directly: `Storage()(undef, 1024)`.
 Like `Backend`, `Storage()` does not auto-install by default. Pass `install=true` or
 set `set_install_preference!(true)` to opt in.
 """
-function Storage(target::Symbol = :GPU; fallback::Bool = true, install::Bool = get_install_preference())
+function Storage(target::Symbol = :GPU; fallback::Bool = true, install::Bool = get_install_preference())::Type
     get_backend_func(target, STORAGE_TYPE, install, fallback)
 end
 
@@ -221,13 +247,16 @@ end
 
 Backend targets selectable in the active project, in the form accepted by [`Backend`](@ref):
 always `:CPU`; `:GPU` when a native GPU backend (CUDA/AMDGPU/Metal/oneAPI) is present in the
-manifest; `:Lava` when Lava is present. Reads the manifest only, so no loading happens.
+manifest; `:Lava` and `:Mantle` when that package is present. Reads the manifest only, so
+no loading happens.
 """
 function available_backends()::Vector{Symbol}
     installed = installed_backends()
     targets = Symbol[:CPU]
     any(b -> b in GPU_BACKENDS, installed) && push!(targets, :GPU)
-    "Lava" in installed && push!(targets, :Lava)
+    for (target, name) in sort!(collect(TARGET_PACKAGE))
+        name in installed && push!(targets, target)
+    end
     return targets
 end
 
@@ -276,7 +305,7 @@ function test_backends()::Bool
 
     results = Dict{String,Union{NamedTuple,Exception}}()
 
-    for target in (:CPU, :GPU, :Lava)
+    for target in (:CPU, :GPU, :Lava, :Mantle)
         try
             b = Backend(target; fallback=false, install=false)
             s = Storage(target; fallback=false, install=false)
