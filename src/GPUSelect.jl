@@ -5,7 +5,6 @@ import KernelAbstractions
 import Libdl
 using Pkg
 using Preferences
-using TOML
 
 const BACKENDS = Dict{String,Base.UUID}(
     "CUDA"   => Base.UUID("052768ef-5323-5732-b1bb-66c8b64840ba"),
@@ -194,7 +193,8 @@ end
 """
     clear_backend!()
 
-Remove the backend preference so `@load_backend()` falls back to manifest scanning.
+Remove the backend preference so `@load_backend()` falls back to detecting the
+installed backend.
 """
 function clear_backend!()
     @delete_preferences!("backend")
@@ -204,24 +204,26 @@ end
 """
     installed_backends() -> Vector{String}
 
-Return the names of known GPU backends present in the active project's manifest.
+Return the names of known GPU backends that can be loaded from the active environment.
+
+The lookup is delegated to Julia's own code loading, so it agrees with what
+`Backend()` and `Storage()` will actually manage to load. In particular it handles
+workspaces, where the manifest lives at the workspace root rather than beside the
+member project, as well as version-specific manifest names (`Manifest-v1.12.toml`),
+an explicit `manifest = "..."` entry in `Project.toml`, and backends inherited from
+elsewhere in `LOAD_PATH`.
 """
 function installed_backends()::Vector{String}
-    proj = Base.active_project()
-    proj === nothing && return String[]
-    manifest = joinpath(dirname(proj), "Manifest.toml")
-    isfile(manifest) || return String[]
-    data = TOML.parsefile(manifest)
-    deps = haskey(data, "deps") ? data["deps"] : data  # v2 vs v1 manifest format
-    return sort([name for name in keys(BACKENDS) if haskey(deps, name)])
+    return sort!([name for (name, uuid) in BACKENDS
+                  if Base.locate_package(Base.PkgId(uuid, name)) !== nothing])
 end
 
 """
     available_backends() -> Vector{Symbol}
 
-Backend targets selectable in the active project, in the form accepted by [`Backend`](@ref):
-always `:CPU`; `:GPU` when a native GPU backend (CUDA/AMDGPU/Metal/oneAPI) is present in the
-manifest; `:Lava` when Lava is present. Reads the manifest only, so no loading happens.
+Backend targets selectable in the active environment, in the form accepted by [`Backend`](@ref):
+always `:CPU`; `:GPU` when a native GPU backend (CUDA/AMDGPU/Metal/oneAPI) is available;
+`:Lava` when Lava is available. Only resolves package paths, so nothing is loaded.
 """
 function available_backends()::Vector{Symbol}
     installed = installed_backends()
@@ -302,9 +304,9 @@ end
 """
     @load_backend()
 
-Scan the active project manifest (or read the preference set via `set_backend!`)
-and expand to `using <BackendName>`. After this, `Backend(:GPU)` or `Backend(:Lava)`
-return immediately without triggering another load.
+Find the backend installed in the active environment (or read the preference set
+via `set_backend!`) and expand to `using <BackendName>`. After this, `Backend(:GPU)`
+or `Backend(:Lava)` return immediately without triggering another load.
 
 Errors if zero or multiple backends are installed and no preference is set.
 """
@@ -318,7 +320,7 @@ macro load_backend()
     else
         found = installed_backends()
         isempty(found) &&
-            error("No GPU backend found in the manifest. " *
+            error("No GPU backend found in the active environment. " *
                   "Run GPUSelect.auto_install!() or Pkg.add(\"CUDA\") / Pkg.add(\"AMDGPU\") etc.")
         length(found) > 1 &&
             error("Multiple GPU backends found: $(join(found, ", ")). " *

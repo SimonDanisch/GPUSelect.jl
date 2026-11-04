@@ -47,7 +47,7 @@ y = adapt(backend, rand(4, 4))    # backend/storage work with adapt
 |---|---|
 | `auto_install!()` | Detect GPU hardware and `Pkg.add` the matching backend. Pass `force=true` to reinstall. |
 | `set_backend!(name)` | Pin a specific backend (`"CUDA"`, `"AMDGPU"`, `"Lava"`, …) in `LocalPreferences.toml`. |
-| `clear_backend!()` | Remove the pinned preference; `@load_backend()` falls back to manifest scanning. |
+| `clear_backend!()` | Remove the pinned preference; `@load_backend()` falls back to detecting the installed backend. |
 | `set_install_preference!(true)` | Make `Backend()` / `Storage()` auto-install on first call instead of erroring. |
 
 ### Per-script
@@ -75,7 +75,7 @@ Both `Backend` and `Storage` accept:
 
 ```julia
 GPUSelect.find_gpu_pkgid()    # -> Base.PkgId or nothing
-GPUSelect.installed_backends() # -> Vector{String} from the active manifest
+GPUSelect.installed_backends() # -> Vector{String} loadable from the active environment
 ```
 
 Detection probes driver shared libraries (`libcuda`, `libamdhip64`, `libze_loader`, `libvulkan`, …)
@@ -108,7 +108,7 @@ Run this from the REPL in your project after `auto_install!()` to confirm everyt
 
 ## Multiple backends / explicit choice
 
-When multiple backends are installed, `Backend()` prefers the one `find_gpu_pkgid()` detects from driver libraries, falling back to the first alphabetically. In the rare case that's wrong, uninstall the unwanted backend or keep only the one you need in your project manifest.
+When multiple backends are installed, `Backend()` prefers the one `find_gpu_pkgid()` detects from driver libraries, falling back to the first alphabetically. In the rare case that's wrong, uninstall the unwanted backend or keep only the one you need in your project.
 
 ## Backends
 
