@@ -38,6 +38,28 @@ end
         @info "installed_backends → $(isempty(bs) ? "none" : join(bs, ", "))"
     end
 
+    if VERSION >= v"1.11"
+        @testset "installed_backends with a versioned manifest" begin
+            dir = mktempdir()
+            write(joinpath(dir, "Project.toml"), "[deps]\n")
+            write(joinpath(dir, "Manifest-v$(VERSION.major).$(VERSION.minor).toml"), """
+                julia_version = "$(VERSION)"
+                manifest_format = "2.0"
+
+                [[deps.CUDA]]
+                uuid = "052768ef-5323-5732-b1bb-66c8b64840ba"
+                version = "5.0.0"
+                """)
+            active = Base.ACTIVE_PROJECT[]
+            try
+                Base.ACTIVE_PROJECT[] = joinpath(dir, "Project.toml")
+                @test GPUSelect.installed_backends() == ["CUDA"]
+            finally
+                Base.ACTIVE_PROJECT[] = active
+            end
+        end
+    end
+
     @testset "Preferences" begin
         @test GPUSelect.get_install_preference() isa Bool
         GPUSelect.set_backend!("CUDA")
