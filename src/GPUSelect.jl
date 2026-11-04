@@ -209,8 +209,8 @@ Return the names of known GPU backends present in the active project's manifest.
 function installed_backends()::Vector{String}
     proj = Base.active_project()
     proj === nothing && return String[]
-    manifest = joinpath(dirname(proj), "Manifest.toml")
-    isfile(manifest) || return String[]
+    manifest = Base.project_file_manifest_path(proj)
+    manifest === nothing && return String[]
     data = TOML.parsefile(manifest)
     deps = haskey(data, "deps") ? data["deps"] : data  # v2 vs v1 manifest format
     return sort([name for name in keys(BACKENDS) if haskey(deps, name)])
