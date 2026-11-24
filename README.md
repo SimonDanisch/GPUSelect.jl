@@ -59,8 +59,10 @@ y = adapt(backend, rand(4, 4))    # backend/storage work with adapt
 | `Backend(:Lava)` | `LavaBackend()`. Vulkan backend; falls back to lavapipe when no discrete GPU. |
 | `Storage()` | The GPU array type (`ROCArray`, `CuArray`, …). |
 | `Storage(:CPU)` | `Array`. |
+| `devices()` | `Vector{DeviceInfo}` describing the GPUs of the selected backend (see [Device information](#device-information)). |
+| `devices(:CPU)` | A one-element `Vector{DeviceInfo}` describing the host CPU. |
 
-Both `Backend` and `Storage` accept:
+`Backend`, `Storage` and `devices` accept:
 
 - `fallback=true`: silently return `CPU()` / `Array` and emit a warning when the backend is unavailable (default: `true`).
 - `fallback=false`: error instead of falling back.
@@ -70,6 +72,41 @@ Both `Backend` and `Storage` accept:
 > defaults to `get_install_preference()`, which is `false` unless you opt in once with
 > `GPUSelect.set_install_preference!(true)`. Until then, missing backends produce an
 > error (or a fallback to CPU when `fallback=true`), never an implicit `Pkg.add`.
+
+### Device information
+
+`GPUSelect.devices()` lists the devices of the backend that `Backend()` selects, through the same
+unified interface on every vendor:
+
+```julia
+julia> GPUSelect.devices()
+1-element Vector{GPUSelect.DeviceInfo}:
+ DeviceInfo("Metal", 1, "Apple M5 Pro")
+
+julia> first(GPUSelect.devices())
+Metal device 1: Apple M5 Pro
+  total_memory: 51.840 GiB
+  max_threads_per_block: 1024
+  compute_units: 20
+  uuid: 1000007ae
+```
+
+Each `DeviceInfo` has the fields below; a field is `nothing` when the backend cannot report it.
+
+| Field | Meaning |
+|---|---|
+| `backend` | `"CUDA"`, `"AMDGPU"`, `"Metal"`, `"oneAPI"` or `"CPU"` |
+| `index` | 1-based position in `devices()` |
+| `name` | Device name, e.g. `"NVIDIA A100-SXM4-40GB"` |
+| `total_memory` | Device memory in bytes (Metal: recommended maximum working set; CPU: system memory) |
+| `max_threads_per_block` | Maximum threads per block / workgroup / threadgroup |
+| `compute_units` | Streaming multiprocessors (CUDA), compute units (AMDGPU), execution units (oneAPI), GPU cores (Metal) or threads (CPU) |
+| `capability` | CUDA compute capability as a `VersionNumber`, or AMD architecture such as `"gfx90a"` |
+| `uuid` | Device UUID as a string (Metal: registry ID) |
+| `pci_bus_id` | PCI address, e.g. `"0000:3b:00.0"` (CUDA and AMDGPU) |
+
+The queries live in package extensions that load together with the backend package, so they add
+no dependencies. `devices(:Lava)` is not supported yet.
 
 ### Hardware detection
 
@@ -100,6 +137,8 @@ Prints a live report from the calling environment:
   :CPU   Backend=KernelAbstractions.CPU  Storage=Array
   :GPU   Backend=ROCBackend              Storage=ROCArray
   :Lava  Backend=LavaBackend             Storage=LavaArray
+
+  GPU device 1: AMD Instinct MI250X  (64.000 GiB)
 ────────────────────────────────────────────────────────────
 ```
 

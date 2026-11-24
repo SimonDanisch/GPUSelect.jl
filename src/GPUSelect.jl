@@ -90,7 +90,14 @@ function current_backend_module(target::Symbol)::Module
     error("Unknown target :$target. Use :GPU, :CPU, or :Lava.")
 end
 
-function get_backend_func(target::Symbol, table::Dict{String,Symbol}, install::Bool, fallback::Bool)::Type
+"""
+    backend_module(target::Symbol, install::Bool, fallback::Bool) -> Module
+
+Resolve `target` to a loaded backend module, installing it first when `install=true`
+and falling back to `KernelAbstractions` (the CPU) with a warning when `fallback=true`.
+Shared by [`Backend`](@ref), [`Storage`](@ref) and [`devices`](@ref).
+"""
+function backend_module(target::Symbol, install::Bool, fallback::Bool)::Module
     target ∈ (:CPU, :GPU, :Lava) || error("Unknown target :$target. Use :GPU, :CPU, or :Lava.")
     if install && target !== :CPU
         needed = target === :Lava ? ("Lava",) : GPU_BACKENDS
@@ -98,13 +105,17 @@ function get_backend_func(target::Symbol, table::Dict{String,Symbol}, install::B
             auto_install!()
         end
     end
-    mod = try
+    return try
         current_backend_module(target)
     catch e
         fallback || rethrow()
         @warn "GPUSelect: $target unavailable, falling back to CPU." exception=e
         KernelAbstractions
     end
+end
+
+function get_backend_func(target::Symbol, table::Dict{String,Symbol}, install::Bool, fallback::Bool)::Type
+    mod = backend_module(target, install, fallback)
     name = String(nameof(mod))
     sym = get(table, name, nothing)
     sym === nothing && error("GPUSelect: no entry registered for module $name")
@@ -295,6 +306,18 @@ function test_backends()::Bool
             println("  :$label  Backend=$(r.backend)  Storage=$(r.storage)")
         end
     end
+    if !(get(results, "GPU", nothing) isa Exception)
+        try
+            println()
+            for d in devices(:GPU; fallback=false, install=false)
+                mem = d.total_memory === nothing ? "" : "  ($(Base.format_bytes(d.total_memory)))"
+                println("  GPU device $(d.index): $(d.name)$mem")
+            end
+        catch e
+            println("  GPU devices: FAILED: $e")
+            ok = false
+        end
+    end
     println(bar, "\n")
     return ok
 end
@@ -327,5 +350,7 @@ macro load_backend()
     end
     return Expr(:using, Expr(:., Symbol(name)))
 end
+
+include("devices.jl")
 
 end

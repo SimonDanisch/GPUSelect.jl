@@ -87,6 +87,33 @@ end
         @info "Backend(:Lava) → $(typeof(b))  [Lava $(lava_installed ? "installed" : "not installed")]"
     end
 
+    @testset "devices" begin
+        cpu = only(GPUSelect.devices(:CPU))
+        @test cpu isa GPUSelect.DeviceInfo
+        @test cpu.backend == "CPU" && cpu.index == 1
+        @test cpu.compute_units == Sys.CPU_THREADS
+        @test cpu.total_memory > 0
+        @test occursin("CPU device 1", sprint(show, MIME("text/plain"), cpu))
+        @test_throws Exception GPUSelect.devices(:Lava)
+        @test_throws Exception GPUSelect.devices(:Vulkan)
+
+        bs = GPUSelect.installed_backends()
+        gpu_installed = any(n -> n ∈ GPUSelect.GPU_BACKENDS, bs)
+        devs = GPUSelect.devices(:GPU; fallback=true)
+        @test devs isa Vector{GPUSelect.DeviceInfo}
+        @test !isempty(devs)
+        @test [d.index for d in devs] == 1:length(devs)
+        if gpu_installed
+            @test GPUSelect.devices(:GPU; fallback=false) == devs
+            @test all(d -> d.backend ∈ GPUSelect.GPU_BACKENDS, devs)
+            @test all(d -> d.max_threads_per_block !== nothing && d.max_threads_per_block > 0, devs)
+        else
+            @test only(devs).backend == "CPU"
+            @test_throws Exception GPUSelect.devices(:GPU; fallback=false)
+        end
+        @info "devices() → $(join((d.name for d in devs), ", "))"
+    end
+
     @testset "Computation: Backend()" begin
         bs = GPUSelect.installed_backends()
         gpu_installed = any(n -> n ∈ GPUSelect.GPU_BACKENDS, bs)
