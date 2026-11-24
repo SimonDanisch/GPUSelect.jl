@@ -1,0 +1,92 @@
+name: Run Tests
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '.github/workflows/TagBot.yml'
+      - 'LICENSE'
+      - 'README.md'
+  pull_request:
+    branches:
+      - main
+    paths-ignore:
+      - '.github/workflows/TagBot.yml'
+      - 'LICENSE'
+      - 'README.md'
+  workflow_dispatch:
+
+concurrency:
+  # Cancel superseded runs on the same pull request or branch.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Julia ${{ matrix.julia-version }} - ${{ matrix.os }}
+    timeout-minutes: 20
+    runs-on: ${{ matrix.os }}
+    permissions: # needed to allow julia-actions/cache to delete old caches that it has created
+      actions: write
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # min: lowest version allowed by [compat] in Project.toml; lts: long-term support; 1: latest release
+        julia-version: ['min', 'lts', '1']
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: ${{ matrix.julia-version }}
+      - uses: julia-actions/cache@v3
+      - uses: julia-actions/julia-runtest@v1
+
+  # CI runners have no GPU and the backend packages are not test dependencies, so the test
+  # suite never loads the device-listing extensions. This job checks that each extension still
+  # loads against the latest backend versions and that devices() falls back cleanly without a GPU.
+  extensions:
+    name: Extensions - ${{ matrix.os }}
+    timeout-minutes: 30
+    runs-on: ${{ matrix.os }}
+    permissions:
+      actions: write
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            packages: 'CUDA AMDGPU oneAPI'
+          - os: macos-latest
+            packages: 'Metal'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: '1'
+      - uses: julia-actions/cache@v3
+      - name: Load extensions
+        shell: julia --color=yes {0}
+        env:
+          PACKAGES: ${{ matrix.packages }}
+        run: |
+          using Pkg
+          Pkg.activate(; temp=true)
+          Pkg.develop(path=".")
+          pkgs = String.(split(ENV["PACKAGES"]))
+          Pkg.add(pkgs)
+          using GPUSelect
+          for pkg in pkgs
+              @eval using $(Symbol(pkg))
+              ext = Symbol("GPUSelect", pkg, "Ext")
+              Base.get_extension(GPUSelect, ext) === nothing && error("$ext did not load")
+              hasmethod(GPUSelect.device_info, Tuple{Val{Symbol(pkg)}}) ||
+                  error("$ext does not define GPUSelect.device_info(::Val{:$pkg})")
+              println("✓ ", ext)
+          end
+          devs = GPUSelect.devices(; fallback=true)
+          isempty(devs) && error("devices() returned no devices")
+          foreach(d -> (display(d); println()), devs)
