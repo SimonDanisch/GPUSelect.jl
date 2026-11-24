@@ -33,8 +33,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # min: lowest version allowed by [compat] in Project.toml; lts: long-term support; 1: latest release
-        julia-version: ['min', 'lts', '1']
+        # min: lowest version allowed by [compat] in Project.toml (currently the 1.10 LTS); 1: latest release
+        julia-version: ['min', '1']
         os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v7
