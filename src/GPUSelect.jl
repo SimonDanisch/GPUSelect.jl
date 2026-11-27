@@ -8,10 +8,10 @@ using Preferences
 using TOML
 
 const BACKENDS = Dict{String,Base.UUID}(
-    "CUDA"   => Base.UUID("052768ef-5323-5732-b1bb-66c8b64840ba"),
+    "CUDA" => Base.UUID("052768ef-5323-5732-b1bb-66c8b64840ba"),
     "AMDGPU" => Base.UUID("21141c5a-9bdb-4563-92ae-f87d6854732e"),
-    "Lava"   => Base.UUID("3a680b1f-cb25-4bee-9cf7-bc880b76dc8c"),
-    "Metal"  => Base.UUID("dde4c033-4e86-420c-a63e-0dd931031962"),
+    "Lava" => Base.UUID("3a680b1f-cb25-4bee-9cf7-bc880b76dc8c"),
+    "Metal" => Base.UUID("dde4c033-4e86-420c-a63e-0dd931031962"),
     "oneAPI" => Base.UUID("8f75cd03-7ff8-4ecb-9b8f-daf728133b1b"),
 )
 
@@ -19,20 +19,20 @@ const GPU_BACKENDS = ("CUDA", "AMDGPU", "Metal", "oneAPI")
 
 const BACKEND_CONSTRUCTOR = Dict{String,Symbol}(
     "KernelAbstractions" => :CPU,
-    "CUDA"               => :CUDABackend,
-    "AMDGPU"             => :ROCBackend,
-    "Metal"              => :MetalBackend,
-    "oneAPI"             => :oneAPIBackend,
-    "Lava"               => :LavaBackend,
+    "CUDA" => :CUDABackend,
+    "AMDGPU" => :ROCBackend,
+    "Metal" => :MetalBackend,
+    "oneAPI" => :oneAPIBackend,
+    "Lava" => :LavaBackend,
 )
 
 const STORAGE_TYPE = Dict{String,Symbol}(
     "KernelAbstractions" => :Array,
-    "CUDA"               => :CuArray,
-    "AMDGPU"             => :ROCArray,
-    "Metal"              => :MtlArray,
-    "oneAPI"             => :oneArray,
-    "Lava"               => :LavaArray,
+    "CUDA" => :CuArray,
+    "AMDGPU" => :ROCArray,
+    "Metal" => :MtlArray,
+    "oneAPI" => :oneArray,
+    "Lava" => :LavaArray,
 )
 
 """
@@ -44,19 +44,19 @@ backend's `PkgId`, or `nothing` if nothing is detected.
 function find_gpu_pkgid()::Union{Base.PkgId,Nothing}
     Sys.isapple() && Sys.ARCH === :aarch64 && return Base.PkgId(BACKENDS["Metal"], "Metal")
     cuda_lib = Sys.iswindows() ?
-        Libdl.find_library(["nvcuda"]) :
-        Libdl.find_library(["libcuda", "libcuda.so.1", "libcuda.so"])
+               Libdl.find_library(["nvcuda"]) :
+               Libdl.find_library(["libcuda", "libcuda.so.1", "libcuda.so"])
     !isempty(cuda_lib) && return Base.PkgId(BACKENDS["CUDA"], "CUDA")
     amd_lib = Sys.iswindows() ?
-        Libdl.find_library(["amdhip64"]) :
-        Libdl.find_library(["libamdhip64", "libhip_hcc"])
+              Libdl.find_library(["amdhip64"]) :
+              Libdl.find_library(["libamdhip64", "libhip_hcc"])
     (!isempty(amd_lib) || (Sys.islinux() && isfile("/dev/kfd"))) &&
         return Base.PkgId(BACKENDS["AMDGPU"], "AMDGPU")
     ze_lib = Libdl.find_library(["libze_loader", "ze_loader"])
     !isempty(ze_lib) && return Base.PkgId(BACKENDS["oneAPI"], "oneAPI")
     vk_lib = Sys.iswindows() ?
-        Libdl.find_library(["vulkan-1"]) :
-        Libdl.find_library(["libvulkan", "libvulkan.so.1", "libMoltenVK"])
+             Libdl.find_library(["vulkan-1"]) :
+             Libdl.find_library(["libvulkan", "libvulkan.so.1", "libMoltenVK"])
     !isempty(vk_lib) && return Base.PkgId(BACKENDS["Lava"], "Lava")
     return nothing
 end
@@ -78,7 +78,7 @@ function current_backend_module(target::Symbol)::Module
         found = filter(n -> n ∈ GPU_BACKENDS, installed_backends())
         isempty(found) && error(
             "No GPU backend installed. " *
-            "Run GPUSelect.auto_install!() or Pkg.add(\"CUDA\") / Pkg.add(\"AMDGPU\") etc.")
+                "Run GPUSelect.auto_install!() or Pkg.add(\"CUDA\") / Pkg.add(\"AMDGPU\") etc.")
         detected = find_gpu_pkgid()
         name = detected !== nothing && detected.name ∈ found ? detected.name : first(found)
         return Base.require(Base.PkgId(BACKENDS[name], name))
@@ -90,7 +90,14 @@ function current_backend_module(target::Symbol)::Module
     error("Unknown target :$target. Use :GPU, :CPU, or :Lava.")
 end
 
-function get_backend_func(target::Symbol, table::Dict{String,Symbol}, install::Bool, fallback::Bool)::Type
+"""
+    backend_module(target::Symbol, install::Bool, fallback::Bool) -> Module
+
+Resolve `target` to a loaded backend module, installing it first when `install=true`
+and falling back to `KernelAbstractions` (the CPU) with a warning when `fallback=true`.
+Shared by [`Backend`](@ref), [`Storage`](@ref) and [`devices`](@ref).
+"""
+function backend_module(target::Symbol, install::Bool, fallback::Bool)::Module
     target ∈ (:CPU, :GPU, :Lava) || error("Unknown target :$target. Use :GPU, :CPU, or :Lava.")
     if install && target !== :CPU
         needed = target === :Lava ? ("Lava",) : GPU_BACKENDS
@@ -98,13 +105,17 @@ function get_backend_func(target::Symbol, table::Dict{String,Symbol}, install::B
             auto_install!()
         end
     end
-    mod = try
+    return try
         current_backend_module(target)
     catch e
         fallback || rethrow()
         @warn "GPUSelect: $target unavailable, falling back to CPU." exception=e
         KernelAbstractions
     end
+end
+
+function get_backend_func(target::Symbol, table::Dict{String,Symbol}, install::Bool, fallback::Bool)::Type
+    mod = backend_module(target, install, fallback)
     name = String(nameof(mod))
     sym = get(table, name, nothing)
     sym === nothing && error("GPUSelect: no entry registered for module $name")
@@ -130,7 +141,7 @@ present in the active project, it errors (or falls back to CPU when `fallback=tr
 Pass `install=true` explicitly, or opt in once per environment with
 `set_install_preference!(true)`, to have `auto_install!()` run automatically.
 """
-function Backend(target::Symbol = :GPU; fallback::Bool = true, install::Bool = get_install_preference())
+function Backend(target::Symbol=:GPU; fallback::Bool=true, install::Bool=get_install_preference())
     T = get_backend_func(target, BACKEND_CONSTRUCTOR, install, fallback)
     return Base.invokelatest(T)
 end
@@ -152,7 +163,7 @@ Use with `adapt` or allocate directly: `Storage()(undef, 1024)`.
 Like `Backend`, `Storage()` does not auto-install by default. Pass `install=true` or
 set `set_install_preference!(true)` to opt in.
 """
-function Storage(target::Symbol = :GPU; fallback::Bool = true, install::Bool = get_install_preference())
+function Storage(target::Symbol=:GPU; fallback::Bool=true, install::Bool=get_install_preference())
     get_backend_func(target, STORAGE_TYPE, install, fallback)
 end
 
@@ -246,7 +257,7 @@ function auto_install!(; force::Bool=false)
     pkgid = find_gpu_pkgid()
     pkgid === nothing && error(
         "Could not detect a supported GPU. " *
-        "Install a backend manually: Pkg.add(\"CUDA\"), Pkg.add(\"AMDGPU\"), etc.")
+            "Install a backend manually: Pkg.add(\"CUDA\"), Pkg.add(\"AMDGPU\"), etc.")
     @info "GPUSelect: detected $(pkgid.name). Running Pkg.add(\"$(pkgid.name)\")..."
     Pkg.add(pkgid.name)
     @info "GPUSelect: done. Call Backend(:GPU) or Backend(:Lava) in your scripts."
@@ -268,8 +279,8 @@ function test_backends()::Bool
     println("  $(Sys.iswindows() ? "Windows" : Sys.isapple() ? "macOS" : "Linux") / $(Sys.ARCH)")
     println(bar)
 
-    pkgid  = find_gpu_pkgid()
-    bs     = installed_backends()
+    pkgid = find_gpu_pkgid()
+    bs = installed_backends()
     println("  Detected hardware:  $(pkgid === nothing ? "none" : pkgid.name)")
     println("  Installed backends: $(isempty(bs) ? "none" : join(bs, ", "))")
     println()
@@ -295,6 +306,18 @@ function test_backends()::Bool
             println("  :$label  Backend=$(r.backend)  Storage=$(r.storage)")
         end
     end
+    if !(get(results, "GPU", nothing) isa Exception)
+        try
+            println()
+            for d in devices(:GPU; fallback=false, install=false)
+                mem = d.total_memory === nothing ? "" : "  ($(Base.format_bytes(d.total_memory)))"
+                println("  GPU device $(d.index): $(d.name)$mem")
+            end
+        catch e
+            println("  GPU devices: FAILED: $e")
+            ok = false
+        end
+    end
     println(bar, "\n")
     return ok
 end
@@ -313,19 +336,22 @@ macro load_backend()
     name = if preferred !== nothing
         preferred ∈ keys(BACKENDS) ||
             error("Unknown backend in preferences: \"$preferred\". " *
-                  "Fix with GPUSelect.set_backend!(\"CUDA\") etc.")
+                "Fix with GPUSelect.set_backend!(\"CUDA\") etc.")
         preferred
     else
         found = installed_backends()
         isempty(found) &&
             error("No GPU backend found in the manifest. " *
-                  "Run GPUSelect.auto_install!() or Pkg.add(\"CUDA\") / Pkg.add(\"AMDGPU\") etc.")
+                "Run GPUSelect.auto_install!() or Pkg.add(\"CUDA\") / Pkg.add(\"AMDGPU\") etc.")
         length(found) > 1 &&
             error("Multiple GPU backends found: $(join(found, ", ")). " *
-                  "Pick one with GPUSelect.set_backend!(\"CUDA\") or be explicit with `using CUDA`.")
+                "Pick one with GPUSelect.set_backend!(\"CUDA\") or be explicit with `using CUDA`.")
         only(found)
     end
     return Expr(:using, Expr(:., Symbol(name)))
 end
+
+include("devices.jl")
+include("types.jl")
 
 end

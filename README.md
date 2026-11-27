@@ -59,8 +59,13 @@ y = adapt(backend, rand(4, 4))    # backend/storage work with adapt
 | `Backend(:Lava)` | `LavaBackend()`. Vulkan backend; falls back to lavapipe when no discrete GPU. |
 | `Storage()` | The GPU array type (`ROCArray`, `CuArray`, …). |
 | `Storage(:CPU)` | `Array`. |
+| `devices()` | `Vector{DeviceInfo}` describing the GPUs of the selected backend (see [Device information](#device-information)). |
+| `devices(:CPU)` | A one-element `Vector{DeviceInfo}` describing the host CPU. |
+| `known_types()` | Float and integer element types the selected backend supports, from a lookup table; loads nothing (see [Supported element types](#supported-element-types)). |
+| `test_types()` | The same, found by running a small kernel per type on the device. |
+| `float_types(ts)` / `integer_types(ts)` | The float / integer types in a `known_types` result (all that may be supported) or `test_types` result (all that passed), as a `Vector{DataType}`. |
 
-Both `Backend` and `Storage` accept:
+`Backend`, `Storage`, `devices` and `test_types` accept:
 
 - `fallback=true`: silently return `CPU()` / `Array` and emit a warning when the backend is unavailable (default: `true`).
 - `fallback=false`: error instead of falling back.
@@ -70,6 +75,105 @@ Both `Backend` and `Storage` accept:
 > defaults to `get_install_preference()`, which is `false` unless you opt in once with
 > `GPUSelect.set_install_preference!(true)`. Until then, missing backends produce an
 > error (or a fallback to CPU when `fallback=true`), never an implicit `Pkg.add`.
+
+### Device information
+
+`GPUSelect.devices()` lists the devices of the backend that `Backend()` selects, through the same
+unified interface on every vendor:
+
+```julia
+julia> GPUSelect.devices()
+1-element Vector{GPUSelect.DeviceInfo}:
+ DeviceInfo("Metal", 1, "Apple M5 Pro")
+
+julia> first(GPUSelect.devices())
+Metal device 1: Apple M5 Pro
+  total_memory: 51.840 GiB
+  max_threads_per_block: 1024
+  compute_units: 20
+  uuid: 1000007ae
+```
+
+Each `DeviceInfo` has the fields below; a field is `nothing` when the backend cannot report it.
+
+| Field | Meaning |
+|---|---|
+| `backend` | `"CUDA"`, `"AMDGPU"`, `"Metal"`, `"oneAPI"` or `"CPU"` |
+| `index` | 1-based position in `devices()` |
+| `name` | Device name, e.g. `"NVIDIA A100-SXM4-40GB"` |
+| `total_memory` | Device memory in bytes (Metal: recommended maximum working set; CPU: system memory) |
+| `max_threads_per_block` | Maximum threads per block / workgroup / threadgroup |
+| `compute_units` | Streaming multiprocessors (CUDA), compute units (AMDGPU), execution units (oneAPI), GPU cores (Metal) or threads (CPU) |
+| `capability` | CUDA compute capability as a `VersionNumber`, or AMD architecture such as `"gfx90a"` |
+| `uuid` | Device UUID as a string (Metal: registry ID) |
+| `pci_bus_id` | PCI address, e.g. `"0000:3b:00.0"` (CUDA and AMDGPU) |
+
+### Supported element types
+
+Which element types work in a kernel differs per vendor, per device and per version of the
+backend package: Metal has no `Float64`, Intel Arc GPUs have no `Float64` either, and the CPU
+backend lost 128-bit integers when KernelAbstractions 0.10 moved it to POCL. GPUSelect answers
+this in two ways.
+
+`GPUSelect.known_types()` looks the backend up in a table. It loads, compiles and runs nothing,
+so it is instant and works before the backend is even installed. It uses the backend version in
+your manifest, and lists types that depend on the device, or that the table has no entry for,
+separately:
+
+```julia
+julia> GPUSelect.known_types("Metal")
+Metal supports: Float16, Float32, Int8, Int16, Int32, Int64, UInt8, UInt16, UInt32, UInt64
+  Float64 not supported: Apple GPUs have no Float64
+  Int128 not supported: Metal has no 128-bit integers
+  UInt128 not supported: Metal has no 128-bit integers
+  BFloat16 depends on device: needs Metal 3.1 (macOS 14) or newer
+
+julia> Float64 in GPUSelect.known_types("CUDA")
+true
+```
+
+`GPUSelect.test_types()` finds out for certain on your device: for each type it compiles and runs
+a small KernelAbstractions kernel that stores, multiplies, adds and reads back values. This loads
+the backend and takes a few seconds, since each type compiles its own kernel.
+
+```julia
+julia> GPUSelect.test_types()
+Metal v1.12.1 device 1 supports: Float16, BFloat16, Float32, Int8, Int16, Int32, Int64, UInt8, UInt16, UInt32, UInt64
+  Float64 not supported: backend reports no Float64 support
+  Int128 not supported: Metal does not support Int128 values, try using Int64 instead
+  UInt128 not supported: Metal does not support UInt128 values, try using UInt64 instead
+
+julia> GPUSelect.test_types(GPUSelect.devices()[2]; types=[Float16, Float64])  # a specific device and types
+```
+
+To use the result in code, for example to tune over precisions, `float_types` and
+`integer_types` return the types as Julia types, from low to high precision. From the table
+(`known_types()`, the default) they give every type that may be supported: all types except the
+ones the table knows do not work. Whether a device-dependent type works on your GPU is then up to
+you, or to `test_types`, whose result contains exactly the types that passed:
+
+```julia
+julia> GPUSelect.float_types(GPUSelect.known_types("oneAPI"))       # may be supported
+3-element Vector{DataType}:
+ Float16
+ Float32
+ Float64
+
+julia> GPUSelect.float_types(GPUSelect.known_types("oneAPI"); certain=true)   # always supported
+1-element Vector{DataType}:
+ Float32
+
+julia> GPUSelect.float_types(GPUSelect.test_types())                 # works on this device
+```
+
+`BFloat16` is tested only when BFloat16s.jl is loaded (`using BFloat16s`); CUDA, AMDGPU and Metal
+load it themselves, oneAPI does not.
+
+The test suite checks the table against `test_types` on whatever hardware it runs on, so running
+`Pkg.test("GPUSelect")` on a GPU also verifies the table for that backend.
+
+The queries live in package extensions that load together with the backend package, so they add
+no dependencies. `devices(:Lava)` is not supported yet.
 
 ### Hardware detection
 
@@ -100,6 +204,8 @@ Prints a live report from the calling environment:
   :CPU   Backend=KernelAbstractions.CPU  Storage=Array
   :GPU   Backend=ROCBackend              Storage=ROCArray
   :Lava  Backend=LavaBackend             Storage=LavaArray
+
+  GPU device 1: AMD Instinct MI250X  (64.000 GiB)
 ────────────────────────────────────────────────────────────
 ```
 
