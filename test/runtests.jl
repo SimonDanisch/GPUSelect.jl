@@ -28,6 +28,36 @@ end
         @info "find_gpu_pkgid → $(pkgid === nothing ? "nothing" : pkgid.name)"
     end
 
+    @testset "pci_gpu_backends" begin
+        @test GPUSelect.pci_gpu_backends(joinpath(tempdir(), "does-not-exist-gpuselect")) === nothing
+        mktempdir() do dir
+            function device!(addr, class, vendor)
+                mkpath(joinpath(dir, addr))
+                write(joinpath(dir, addr, "class"), class * "\n")
+                write(joinpath(dir, addr, "vendor"), vendor * "\n")
+            end
+            @test GPUSelect.pci_gpu_backends(dir) == String[]
+            device!("0000:00:00.0", "0x060000", "0x10de")  # NVIDIA host bridge: not a GPU
+            device!("0000:02:00.0", "0x030000", "0x1a03")  # ASPEED BMC graphics: no backend
+            device!("0000:03:00.0", "0x120000", "0x8086")  # Intel NPU: not a GPU
+            @test GPUSelect.pci_gpu_backends(dir) == String[]
+            device!("0000:c1:00.0", "0x038000", "0x1002")  # AMD Instinct MI250X
+            @test GPUSelect.pci_gpu_backends(dir) == ["AMDGPU"]
+            device!("0000:00:02.0", "0x030000", "0x8086")  # Intel integrated graphics
+            @test GPUSelect.pci_gpu_backends(dir) == ["AMDGPU", "oneAPI"]
+            device!("0000:3b:00.0", "0x030200", "0x10DE")  # NVIDIA datacenter GPU
+            @test GPUSelect.pci_gpu_backends(dir) == ["CUDA", "AMDGPU", "oneAPI"]
+            mkpath(joinpath(dir, "0000:ff:00.0"))           # unreadable entry is skipped
+            @test GPUSelect.pci_gpu_backends(dir) == ["CUDA", "AMDGPU", "oneAPI"]
+        end
+        mktempdir() do dir
+            mkpath(joinpath(dir, "0000:01:00.0"))
+            write(joinpath(dir, "0000:01:00.0", "class"), "0x120000")
+            write(joinpath(dir, "0000:01:00.0", "vendor"), "0x1002")  # datacenter GPU listed as accelerator
+            @test GPUSelect.pci_gpu_backends(dir) == ["AMDGPU"]
+        end
+    end
+
     @testset "installed_backends" begin
         bs = GPUSelect.installed_backends()
         @test bs isa Vector{String}

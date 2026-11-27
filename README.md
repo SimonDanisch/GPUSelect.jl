@@ -78,8 +78,12 @@ GPUSelect.find_gpu_pkgid()    # -> Base.PkgId or nothing
 GPUSelect.installed_backends() # -> Vector{String} from the active manifest
 ```
 
-Detection probes driver shared libraries (`libcuda`, `libamdhip64`, `libze_loader`, `libvulkan`, …)
-via `Libdl`, with no `nvidia-smi` / `rocm-smi` required, and works on Windows, Linux, and macOS.
+On Linux, detection reads the PCI vendor of each display controller in `/sys/bus/pci/devices`
+(NVIDIA, then AMD, then Intel), so a driver library that happens to be on the library path (for
+example a CUDA module loaded on an AMD node) does not decide the backend. On other systems, or when
+no such GPU is listed there, it probes driver shared libraries (`libcuda`, `libamdhip64`,
+`libze_loader`, `libvulkan`, …) via `Libdl`. No `nvidia-smi` / `rocm-smi` is required, and it
+works on Windows, Linux, and macOS.
 
 ### Verification
 
@@ -108,7 +112,7 @@ Run this from the REPL in your project after `auto_install!()` to confirm everyt
 
 ## Multiple backends / explicit choice
 
-When multiple backends are installed, `Backend()` prefers the one `find_gpu_pkgid()` detects from driver libraries, falling back to the first alphabetically. In the rare case that's wrong, uninstall the unwanted backend or keep only the one you need in your project manifest.
+When multiple backends are installed, `Backend()` prefers the one `find_gpu_pkgid()` detects, falling back to the first alphabetically. In the rare case that's wrong, uninstall the unwanted backend or keep only the one you need in your project manifest.
 
 ## Backends
 
