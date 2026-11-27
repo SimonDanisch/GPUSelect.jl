@@ -353,8 +353,13 @@ end
 # The Julia type for a type name, or nothing for BFloat16 when BFloat16s.jl is not loaded.
 type_from_name(T::Symbol) = T === :BFloat16 ? bfloat16_type() : getfield(Base, T)
 
-function types_of_kind(ts::TypeSupport, ::Type{K}, device_dependent::Bool) where {K}
-    names = device_dependent ? vcat(ts.supported, first.(ts.device_dependent)) : ts.supported
+function types_of_kind(ts::TypeSupport, ::Type{K}, certain::Bool) where {K}
+    names = copy(ts.supported)
+    # A table result also lists what may work: device-dependent types and types without an
+    # entry. A test_types result is exact (its `unknown` only holds types it could not test).
+    if !certain && ts.device === nothing
+        append!(names, first.(ts.device_dependent), ts.unknown)
+    end
     out = DataType[]
     for T in TYPE_NAMES   # keeps the order from low to high precision
         T in names || continue
@@ -365,36 +370,45 @@ function types_of_kind(ts::TypeSupport, ::Type{K}, device_dependent::Bool) where
 end
 
 """
-    float_types(ts::TypeSupport = known_types(); device_dependent=false) -> Vector{DataType}
+    float_types(ts::TypeSupport = known_types(); certain=false) -> Vector{DataType}
 
-The supported floating-point element types in `ts`, from low to high precision:
-a subset of `[Float16, BFloat16, Float32, Float64]`. Use `known_types()` (the default) for an
-instant answer from the lookup table, or `test_types()` for the types tested on your device.
+The floating-point element types in `ts`, from low to high precision: a subset of
+`[Float16, BFloat16, Float32, Float64]`.
 
-With `device_dependent=true`, types that the table says depend on the device are included as
-well. `BFloat16` is only returned when BFloat16s.jl is loaded, since that package provides
-the type's arithmetic.
+- From [`known_types`](@ref) (the default), this is every type that may be supported: all
+  types except the ones the table knows do not work, so including types that depend on the
+  device or that the table has no entry for. Pass `certain=true` for only the types the table
+  says always work with this backend.
+- From [`test_types`](@ref), these are exactly the types that passed on the device.
+
+`BFloat16` is only returned when BFloat16s.jl is loaded, since that package provides the
+type's arithmetic.
 
 ```julia
-julia> GPUSelect.float_types(GPUSelect.known_types("Metal"))
-2-element Vector{DataType}:
+julia> GPUSelect.float_types(GPUSelect.known_types("oneAPI"))
+3-element Vector{DataType}:
  Float16
  Float32
+ Float64
 
-julia> for T in GPUSelect.float_types(GPUSelect.test_types())   # e.g. as a tuning parameter
+julia> GPUSelect.float_types(GPUSelect.known_types("oneAPI"); certain=true)
+1-element Vector{DataType}:
+ Float32
+
+julia> for T in GPUSelect.float_types(GPUSelect.test_types())   # only what works on this GPU
            run_kernel(T)
        end
 ```
 """
-float_types(ts::TypeSupport = known_types(); device_dependent::Bool = false) =
-    types_of_kind(ts, AbstractFloat, device_dependent)
+float_types(ts::TypeSupport = known_types(); certain::Bool = false) =
+    types_of_kind(ts, AbstractFloat, certain)
 
 """
-    integer_types(ts::TypeSupport = known_types(); device_dependent=false) -> Vector{DataType}
+    integer_types(ts::TypeSupport = known_types(); certain=false) -> Vector{DataType}
 
-The supported integer element types in `ts`: signed types from `Int8` to `Int128`, then
-unsigned types from `UInt8` to `UInt128`. Use `filter(T -> T <: Signed, integer_types(ts))`
-for only the signed ones. See [`float_types`](@ref) for the arguments.
+The integer element types in `ts`: signed types from `Int8` to `Int128`, then unsigned types
+from `UInt8` to `UInt128`. Use `filter(T -> T <: Signed, integer_types(ts))` for only the
+signed ones. See [`float_types`](@ref) for what is included and for `certain`.
 """
-integer_types(ts::TypeSupport = known_types(); device_dependent::Bool = false) =
-    types_of_kind(ts, Integer, device_dependent)
+integer_types(ts::TypeSupport = known_types(); certain::Bool = false) =
+    types_of_kind(ts, Integer, certain)

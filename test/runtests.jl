@@ -141,9 +141,15 @@ end
         @test GPUSelect.known_types("CPU").version == pkgversion(KA)
         @test occursin("not supported", sprint(show, MIME("text/plain"), GPUSelect.known_types("Metal")))
         @test_throws Exception GPUSelect.known_types("Vulkan")
-        @test GPUSelect.float_types(GPUSelect.known_types("Metal")) == [Float16, Float32]
-        @test GPUSelect.float_types(GPUSelect.known_types("oneAPI")) == [Float32]
-        @test GPUSelect.float_types(GPUSelect.known_types("oneAPI"); device_dependent=true) == [Float16, Float32, Float64]
+        bf16 = GPUSelect.bfloat16_type()   # BFloat16 is only returned when BFloat16s.jl is loaded
+        @test GPUSelect.float_types(GPUSelect.known_types("Metal")) ==
+              (bf16 === nothing ? [Float16, Float32] : [Float16, bf16, Float32])
+        @test GPUSelect.float_types(GPUSelect.known_types("Metal"); certain=true) == [Float16, Float32]
+        @test GPUSelect.float_types(GPUSelect.known_types("oneAPI"); certain=true) == [Float32]
+        @test GPUSelect.float_types(GPUSelect.known_types("oneAPI")) == [Float16, Float32, Float64]
+        @test GPUSelect.integer_types(GPUSelect.known_types("CUDA"; version=v"5.9.0"); certain=true) ==
+              [Int8, Int16, Int32, Int64, UInt8, UInt16, UInt32, UInt64]
+        @test Int128 in GPUSelect.integer_types(GPUSelect.known_types("CUDA"; version=v"5.9.0"))   # unknown, so possible
         @test GPUSelect.integer_types(GPUSelect.known_types("Metal")) ==
               [Int8, Int16, Int32, Int64, UInt8, UInt16, UInt32, UInt64]
         @test GPUSelect.integer_types(GPUSelect.known_types("CUDA"; version=nothing)) ==
