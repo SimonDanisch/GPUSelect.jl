@@ -157,6 +157,9 @@ end
         @test GPUSelect.test_types(only(GPUSelect.devices(:CPU)); types=[Int32]).supported == [:Int32]
         @test_throws Exception GPUSelect.test_types(:Lava)
         check_table(GPUSelect.known_types("CPU"), ts)
+        @test occursin("not tested", Dict(ts.unsupported)[:Int128]) == (:Int128 in first.(GPUSelect.known_types("CPU").unsupported))
+        @test haskey(Dict(GPUSelect.test_types(:CPU; types=[Int128], skip_known=false).unsupported), :Int128) ==
+              !(Int128 in GPUSelect.known_types("CPU"))
 
         bs = GPUSelect.installed_backends()
         if any(n -> n ∈ GPUSelect.GPU_BACKENDS, bs)

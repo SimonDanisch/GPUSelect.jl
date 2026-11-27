@@ -70,9 +70,11 @@ const INTS_128 = (:Int128, :UInt128)
 # documented by the backend or were checked with `test_types`; anything else stays unknown.
 const TYPE_RULES = TypeRule[
     TypeRule("CUDA", (:Float16, :Float32, :Float64, INTS_8_64...), :supported),
+    TypeRule("CUDA", INTS_128, :supported; from=v"6.5.1"),   # checked with test_types on CUDA.jl 6.5.1
     TypeRule("CUDA", (:BFloat16,), :device, "native arithmetic needs compute capability 8.0 (Ampere) or newer"),
 
     TypeRule("AMDGPU", (:Float16, :Float32, :Float64, INTS_8_64...), :supported),
+    TypeRule("AMDGPU", (:BFloat16, INTS_128...), :supported; from=v"2.13.1"),   # checked with test_types on AMDGPU.jl 2.13.1 (MI250X)
 
     TypeRule("Metal", (:Float16, :Float32, INTS_8_64...), :supported),
     TypeRule("Metal", (:Float64,), :unsupported, "Apple GPUs have no Float64"),
@@ -83,6 +85,7 @@ const TYPE_RULES = TypeRule[
     TypeRule("oneAPI", (:Float16,), :device, "the device must report FP16 support"),
     TypeRule("oneAPI", (:Float64,), :device, "not on Intel Arc (Alchemist) and most integrated GPUs; available on Data Center GPU Max"),
     TypeRule("oneAPI", (:BFloat16,), :device, "the device must support the bfloat16 conversions extension"),
+    TypeRule("oneAPI", INTS_128, :unsupported, "SPIR-V has no 128-bit integers; the translator crashes on them"; from=v"2.10.0"),
 
     # KernelAbstractions 0.9 runs CPU kernels as native Julia code; 0.10 compiles them to SPIR-V for POCL.
     TypeRule("CPU", (:Float16, :Float32, :Float64, INTS_8_64...), :supported),
@@ -228,8 +231,13 @@ function first_line(e)
     return length(line) > 200 ? first(line, 200) * "…" : String(line)
 end
 
-function type_support(mod::Module, device::Union{Int,Nothing}, types)
+function type_support(mod::Module, device::Union{Int,Nothing}, types, skip_known::Bool)
     name = String(nameof(mod))
+    label = mod === KernelAbstractions ? "CPU" : name
+    version = pkgversion(mod)
+    # Some unsupported types crash the compiler instead of raising an error (e.g. Int128 in
+    # the SPIR-V translator), which no try/catch survives, so trust the table for those.
+    known_bad = skip_known ? Dict(known_types(label; version).unsupported) : Dict{Symbol,String}()
     backend = Base.invokelatest(getfield(mod, BACKEND_CONSTRUCTOR[name]))
     previous = nothing
     if device !== nothing
@@ -243,6 +251,10 @@ function type_support(mod::Module, device::Union{Int,Nothing}, types)
                                    Base.invokelatest(KernelAbstractions.device, backend) : 1)
         supported, unsupported = Symbol[], Pair{Symbol,String}[]
         for T in types
+            if haskey(known_bad, nameof(T))
+                push!(unsupported, nameof(T) => known_bad[nameof(T)] * " (from known_types; not tested)")
+                continue
+            end
             if T === Float64 && !Base.invokelatest(KernelAbstractions.supports_float64, backend)
                 push!(unsupported, :Float64 => "backend reports no Float64 support")
                 continue
@@ -254,8 +266,7 @@ function type_support(mod::Module, device::Union{Int,Nothing}, types)
                 push!(unsupported, nameof(T) => first_line(e))
             end
         end
-        label = mod === KernelAbstractions ? "CPU" : name
-        return TypeSupport(label, pkgversion(mod), index, supported, unsupported, Pair{Symbol,String}[], Symbol[])
+        return TypeSupport(label, version, index, supported, unsupported, Pair{Symbol,String}[], Symbol[])
     finally
         previous === nothing || Base.invokelatest(KernelAbstractions.device!, backend, previous)
     end
@@ -278,6 +289,10 @@ answers your question.
 `device` is the 1-based device index (see [`devices`](@ref)); by default the current device
 is tested. `fallback` and `install` work as in `Backend()`.
 
+Types that `known_types` lists as unsupported for this backend version are not tested but
+reported with the table's reason, because some of them crash the compiler instead of failing
+with an error (e.g. `Int128` with oneAPI). Pass `skip_known=false` to test them anyway.
+
 ```julia
 julia> GPUSelect.test_types()
 Metal v1.12.1 device 1 supports: Float16, BFloat16, Float32, Int8, Int16, Int32, Int64, UInt8, UInt16, UInt32, UInt64
@@ -287,16 +302,16 @@ Metal v1.12.1 device 1 supports: Float16, BFloat16, Float32, Int8, Int16, Int32,
 ```
 """
 function test_types(target::Symbol = :GPU; device::Union{Int,Nothing} = nothing,
-                    types = candidate_types(), fallback::Bool = true,
+                    types = candidate_types(), skip_known::Bool = true, fallback::Bool = true,
                     install::Bool = get_install_preference())
     target === :Lava && error("GPUSelect.test_types does not support Lava yet.")
     mod = backend_module(target, install, fallback)
-    return type_support(mod, mod === KernelAbstractions ? nothing : device, types)
+    return type_support(mod, mod === KernelAbstractions ? nothing : device, types, skip_known)
 end
 
-function test_types(d::DeviceInfo; types = candidate_types())
-    d.backend == "CPU" && return type_support(KernelAbstractions, nothing, types)
+function test_types(d::DeviceInfo; types = candidate_types(), skip_known::Bool = true)
+    d.backend == "CPU" && return type_support(KernelAbstractions, nothing, types, skip_known)
     haskey(BACKENDS, d.backend) || error("Unknown backend \"$(d.backend)\".")
     mod = Base.require(Base.PkgId(BACKENDS[d.backend], d.backend))
-    return type_support(mod, d.index, types)
+    return type_support(mod, d.index, types, skip_known)
 end
