@@ -345,3 +345,56 @@ function test_types(d::DeviceInfo; types = nothing, skip_crashing::Bool = true)
     mod = Base.require(Base.PkgId(BACKENDS[d.backend], d.backend))
     return type_support(mod, d.index, types, skip_crashing)
 end
+
+# ---------------------------------------------------------------------------------------
+# Element types as Julia types, e.g. for mixed-precision tuning
+# ---------------------------------------------------------------------------------------
+
+# The Julia type for a type name, or nothing for BFloat16 when BFloat16s.jl is not loaded.
+type_from_name(T::Symbol) = T === :BFloat16 ? bfloat16_type() : getfield(Base, T)
+
+function types_of_kind(ts::TypeSupport, ::Type{K}, device_dependent::Bool) where {K}
+    names = device_dependent ? vcat(ts.supported, first.(ts.device_dependent)) : ts.supported
+    out = DataType[]
+    for T in TYPE_NAMES   # keeps the order from low to high precision
+        T in names || continue
+        t = type_from_name(T)
+        t !== nothing && t <: K && push!(out, t)
+    end
+    return out
+end
+
+"""
+    float_types(ts::TypeSupport = known_types(); device_dependent=false) -> Vector{DataType}
+
+The supported floating-point element types in `ts`, from low to high precision:
+a subset of `[Float16, BFloat16, Float32, Float64]`. Use `known_types()` (the default) for an
+instant answer from the lookup table, or `test_types()` for the types tested on your device.
+
+With `device_dependent=true`, types that the table says depend on the device are included as
+well. `BFloat16` is only returned when BFloat16s.jl is loaded, since that package provides
+the type's arithmetic.
+
+```julia
+julia> GPUSelect.float_types(GPUSelect.known_types("Metal"))
+2-element Vector{DataType}:
+ Float16
+ Float32
+
+julia> for T in GPUSelect.float_types(GPUSelect.test_types())   # e.g. as a tuning parameter
+           run_kernel(T)
+       end
+```
+"""
+float_types(ts::TypeSupport = known_types(); device_dependent::Bool = false) =
+    types_of_kind(ts, AbstractFloat, device_dependent)
+
+"""
+    integer_types(ts::TypeSupport = known_types(); device_dependent=false) -> Vector{DataType}
+
+The supported integer element types in `ts`: signed types from `Int8` to `Int128`, then
+unsigned types from `UInt8` to `UInt128`. Use `filter(T -> T <: Signed, integer_types(ts))`
+for only the signed ones. See [`float_types`](@ref) for the arguments.
+"""
+integer_types(ts::TypeSupport = known_types(); device_dependent::Bool = false) =
+    types_of_kind(ts, Integer, device_dependent)

@@ -63,6 +63,7 @@ y = adapt(backend, rand(4, 4))    # backend/storage work with adapt
 | `devices(:CPU)` | A one-element `Vector{DeviceInfo}` describing the host CPU. |
 | `known_types()` | Float and integer element types the selected backend supports, from a lookup table; loads nothing (see [Supported element types](#supported-element-types)). |
 | `test_types()` | The same, found by running a small kernel per type on the device. |
+| `float_types(ts)` / `integer_types(ts)` | The supported float / integer types in a `known_types` or `test_types` result, as a `Vector{DataType}`. |
 
 `Backend`, `Storage`, `devices` and `test_types` accept:
 
@@ -144,6 +145,25 @@ Metal v1.12.1 device 1 supports: Float16, BFloat16, Float32, Int8, Int16, Int32,
 
 julia> GPUSelect.test_types(GPUSelect.devices()[2]; types=[Float16, Float64])  # a specific device and types
 ```
+
+To use the result in code, for example to tune over precisions, `float_types` and
+`integer_types` return the supported types as Julia types, from low to high precision:
+
+```julia
+julia> GPUSelect.float_types(GPUSelect.known_types("Metal"))      # instant, from the table
+2-element Vector{DataType}:
+ Float16
+ Float32
+
+julia> GPUSelect.integer_types(GPUSelect.test_types())             # tested on this device
+8-element Vector{DataType}:
+ Int8
+ ⋮
+ UInt64
+```
+
+Both default to `known_types()` for the selected backend. Pass `device_dependent=true` to also get
+types that the table says depend on the device.
 
 `BFloat16` is tested only when BFloat16s.jl is loaded (`using BFloat16s`); CUDA, AMDGPU and Metal
 load it themselves, oneAPI does not.
