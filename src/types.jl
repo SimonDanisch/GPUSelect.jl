@@ -91,7 +91,7 @@ const TYPE_RULES = TypeRule[
     TypeRule("oneAPI", (:Float32, INTS_8_64...), :supported),
     TypeRule("oneAPI", (:Float16,), :device, "the device must report FP16 support"),
     TypeRule("oneAPI", (:Float64,), :device, "not on Intel Arc (Alchemist) and most integrated GPUs; available on Data Center GPU Max"),
-    TypeRule("oneAPI", (:BFloat16,), :unsupported, "kernel arithmetic does not compile (InvalidIRError)"; from=v"2.10.0"),   # checked on oneAPI.jl 2.10.0 (Max 1550)
+    TypeRule("oneAPI", (:BFloat16,), :unsupported, "kernel arithmetic does not compile (InvalidIRError: unsupported use of bfloat value)"; from=v"2.10.0"),   # checked on oneAPI.jl 2.10.0 (Max 1550)
     TypeRule("oneAPI", (:BFloat16,), :device, "the device must support the bfloat16 conversions extension"),
     TypeRule("oneAPI", INTS_128, :unsupported, "SPIR-V has no 128-bit integers; the translator crashes on them"; from=v"2.10.0", crashes=true),   # segfault in libllvm_spirv, checked on oneAPI.jl 2.10.0 (Max 1550)
 
