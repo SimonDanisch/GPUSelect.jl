@@ -35,14 +35,69 @@ const STORAGE_TYPE = Dict{String,Symbol}(
     "Lava"               => :LavaArray,
 )
 
+# PCI vendor IDs of the GPU vendors that have a native backend, in order of preference.
+const PCI_VENDORS = ("0x10de" => "CUDA", "0x1002" => "AMDGPU", "0x8086" => "oneAPI")
+
+"""
+    pci_gpu_backends(dir = "/sys/bus/pci/devices") -> Vector{String} or nothing
+
+Backend names for the GPUs that Linux lists on the PCI bus, in order of preference
+(CUDA, AMDGPU, oneAPI). A device counts as a GPU when its PCI class is a display
+controller (`0x03xxxx`), or a processing accelerator (`0x12xxxx`) from NVIDIA or AMD,
+which is how some datacenter GPUs report themselves.
+Intel processing accelerators are left out because those are NPUs, not GPUs.
+
+Returns `nothing` when `dir` cannot be read (not Linux, or `/sys` not mounted), so the
+caller can fall back to probing driver libraries.
+"""
+function pci_gpu_backends(dir::AbstractString="/sys/bus/pci/devices")::Union{Vector{String},Nothing}
+    isdir(dir) || return nothing
+    entries = try
+        readdir(dir; join=true)
+    catch
+        return nothing
+    end
+    vendors = Set{String}()
+    for dev in entries
+        class, vendor = try
+            lowercase(strip(read(joinpath(dev, "class"), String))),
+            lowercase(strip(read(joinpath(dev, "vendor"), String)))
+        catch
+            continue
+        end
+        if startswith(class, "0x03") || (startswith(class, "0x12") && vendor in ("0x10de", "0x1002"))
+            push!(vendors, vendor)
+        end
+    end
+    return [name for (id, name) in PCI_VENDORS if id in vendors]
+end
+
 """
     find_gpu_pkgid() -> Base.PkgId or nothing
 
-Probe driver libraries to find what GPU hardware is present and return its
-backend's `PkgId`, or `nothing` if nothing is detected.
+Find what GPU hardware is present and return its backend's `PkgId`, or `nothing` if
+nothing is detected.
+
+On Linux, the PCI devices in `/sys/bus/pci/devices` decide: NVIDIA, then AMD, then Intel
+GPUs. Elsewhere, or when no NVIDIA, AMD or Intel GPU is listed there, this probes driver
+libraries instead.
 """
 function find_gpu_pkgid()::Union{Base.PkgId,Nothing}
     Sys.isapple() && Sys.ARCH === :aarch64 && return Base.PkgId(BACKENDS["Metal"], "Metal")
+    if Sys.islinux()
+        pci = pci_gpu_backends()
+        if pci !== nothing && !isempty(pci)
+            name = first(pci)
+            return Base.PkgId(BACKENDS[name], name)
+        end
+    end
+    return find_gpu_pkgid_from_libraries()
+end
+
+# Detection from driver libraries. A library on the search path does not mean the
+# matching hardware is present (e.g. a CUDA toolkit module loaded on an AMD node), so
+# this is only used when the PCI bus cannot tell.
+function find_gpu_pkgid_from_libraries()::Union{Base.PkgId,Nothing}
     cuda_lib = Sys.iswindows() ?
         Libdl.find_library(["nvcuda"]) :
         Libdl.find_library(["libcuda", "libcuda.so.1", "libcuda.so"])
@@ -50,7 +105,8 @@ function find_gpu_pkgid()::Union{Base.PkgId,Nothing}
     amd_lib = Sys.iswindows() ?
         Libdl.find_library(["amdhip64"]) :
         Libdl.find_library(["libamdhip64", "libhip_hcc"])
-    (!isempty(amd_lib) || (Sys.islinux() && isfile("/dev/kfd"))) &&
+    # /dev/kfd is a character device, so isfile() is always false for it
+    (!isempty(amd_lib) || (Sys.islinux() && ispath("/dev/kfd"))) &&
         return Base.PkgId(BACKENDS["AMDGPU"], "AMDGPU")
     ze_lib = Libdl.find_library(["libze_loader", "ze_loader"])
     !isempty(ze_lib) && return Base.PkgId(BACKENDS["oneAPI"], "oneAPI")
