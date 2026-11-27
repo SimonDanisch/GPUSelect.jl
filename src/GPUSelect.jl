@@ -352,5 +352,6 @@ macro load_backend()
 end
 
 include("devices.jl")
+include("types.jl")
 
 end

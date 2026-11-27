@@ -114,6 +114,61 @@ end
         @info "devices() → $(join((d.name for d in devs), ", "))"
     end
 
+    # Every type the table calls supported or unsupported must behave that way on the device.
+    function check_table(table, tested)
+        for T in table.supported
+            haskey(Dict(tested.unsupported), T) && @error "known_types says $T works on $(table.backend), test_types disagrees" Dict(tested.unsupported)[T]
+            @test !haskey(Dict(tested.unsupported), T)
+        end
+        for (T, _) in table.unsupported
+            @test !(T in tested)
+        end
+    end
+
+    @testset "known_types" begin
+        for b in ("CUDA", "AMDGPU", "Metal", "oneAPI", "CPU")
+            ts = GPUSelect.known_types(b; version=nothing)
+            @test ts.backend == b && ts.device === nothing
+            all = vcat(ts.supported, first.(ts.unsupported), first.(ts.device_dependent), ts.unknown)
+            @test sort(all) == sort(collect(GPUSelect.TYPE_NAMES))   # each type listed exactly once
+            @test :Float32 in ts && Int32 in ts
+        end
+        @test !(Float64 in GPUSelect.known_types("Metal"))
+        @test Float64 in GPUSelect.known_types("CUDA")
+        @test :Float64 in first.(GPUSelect.known_types("oneAPI").device_dependent)
+        @test Int128 in GPUSelect.known_types("CPU"; version=v"0.9.41")      # native Julia CPU backend
+        @test !(Int128 in GPUSelect.known_types("CPU"; version=v"0.10.9"))   # POCL CPU backend
+        @test GPUSelect.known_types("CPU").version == pkgversion(KA)
+        @test occursin("not supported", sprint(show, MIME("text/plain"), GPUSelect.known_types("Metal")))
+        @test_throws Exception GPUSelect.known_types("Vulkan")
+        @test GPUSelect.manifest_version("NotAPackage") === nothing
+    end
+
+    @testset "test_types" begin
+        @test Float32 in GPUSelect.candidate_types() && Int64 in GPUSelect.candidate_types()
+        ts = GPUSelect.test_types(:CPU)
+        @test ts isa GPUSelect.TypeSupport
+        @test ts.backend == "CPU" && ts.device == 1
+        @test ts.version == pkgversion(KA)
+        @test Float32 in ts && Int32 in ts && UInt8 in ts
+        @test length(ts.supported) + length(ts.unsupported) == length(GPUSelect.candidate_types())
+        @test occursin("CPU", sprint(show, MIME("text/plain"), ts))
+        @test GPUSelect.test_types(:CPU; types=[Float32]).supported == [:Float32]
+        @test GPUSelect.test_types(only(GPUSelect.devices(:CPU)); types=[Int32]).supported == [:Int32]
+        @test_throws Exception GPUSelect.test_types(:Lava)
+        check_table(GPUSelect.known_types("CPU"), ts)
+
+        bs = GPUSelect.installed_backends()
+        if any(n -> n ∈ GPUSelect.GPU_BACKENDS, bs)
+            gts = GPUSelect.test_types(:GPU; fallback=false)
+            @test gts.backend ∈ GPUSelect.GPU_BACKENDS
+            @test Float32 in gts && Int32 in gts
+            @test GPUSelect.test_types(first(GPUSelect.devices(:GPU; fallback=false))).supported == gts.supported
+            check_table(GPUSelect.known_types(gts.backend; version=gts.version), gts)
+            @info "test_types() → $(join(gts.supported, ", "))"
+        end
+    end
+
     @testset "Computation: Backend()" begin
         bs = GPUSelect.installed_backends()
         gpu_installed = any(n -> n ∈ GPUSelect.GPU_BACKENDS, bs)

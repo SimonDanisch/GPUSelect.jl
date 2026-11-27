@@ -61,8 +61,10 @@ y = adapt(backend, rand(4, 4))    # backend/storage work with adapt
 | `Storage(:CPU)` | `Array`. |
 | `devices()` | `Vector{DeviceInfo}` describing the GPUs of the selected backend (see [Device information](#device-information)). |
 | `devices(:CPU)` | A one-element `Vector{DeviceInfo}` describing the host CPU. |
+| `known_types()` | Float and integer element types the selected backend supports, from a lookup table; loads nothing (see [Supported element types](#supported-element-types)). |
+| `test_types()` | The same, found by running a small kernel per type on the device. |
 
-`Backend`, `Storage` and `devices` accept:
+`Backend`, `Storage`, `devices` and `test_types` accept:
 
 - `fallback=true`: silently return `CPU()` / `Array` and emit a warning when the backend is unavailable (default: `true`).
 - `fallback=false`: error instead of falling back.
@@ -104,6 +106,47 @@ Each `DeviceInfo` has the fields below; a field is `nothing` when the backend ca
 | `capability` | CUDA compute capability as a `VersionNumber`, or AMD architecture such as `"gfx90a"` |
 | `uuid` | Device UUID as a string (Metal: registry ID) |
 | `pci_bus_id` | PCI address, e.g. `"0000:3b:00.0"` (CUDA and AMDGPU) |
+
+### Supported element types
+
+Which element types work in a kernel differs per vendor, per device and per version of the
+backend package: Metal has no `Float64`, Intel Arc GPUs have no `Float64` either, and the CPU
+backend lost 128-bit integers when KernelAbstractions 0.10 moved it to POCL. GPUSelect answers
+this in two ways.
+
+`GPUSelect.known_types()` looks the backend up in a table. It loads, compiles and runs nothing,
+so it is instant and works before the backend is even installed. It uses the backend version in
+your manifest, and lists types that depend on the device, or that the table has no entry for,
+separately:
+
+```julia
+julia> GPUSelect.known_types("Metal")
+Metal supports: Float16, Float32, Int8, Int16, Int32, Int64, UInt8, UInt16, UInt32, UInt64
+  Float64 not supported: Apple GPUs have no Float64
+  Int128 not supported: Metal has no 128-bit integers
+  UInt128 not supported: Metal has no 128-bit integers
+  BFloat16 depends on device: needs Metal 3.1 (macOS 14) or newer
+
+julia> Float64 in GPUSelect.known_types("CUDA")
+true
+```
+
+`GPUSelect.test_types()` finds out for certain on your device: for each type it compiles and runs
+a small KernelAbstractions kernel that stores, multiplies, adds and reads back values. This loads
+the backend and takes a few seconds, since each type compiles its own kernel.
+
+```julia
+julia> GPUSelect.test_types()
+Metal v1.12.1 device 1 supports: Float16, BFloat16, Float32, Int8, Int16, Int32, Int64, UInt8, UInt16, UInt32, UInt64
+  Float64 not supported: backend reports no Float64 support
+  Int128 not supported: Metal does not support Int128 values, try using Int64 instead
+  UInt128 not supported: Metal does not support UInt128 values, try using UInt64 instead
+
+julia> GPUSelect.test_types(GPUSelect.devices()[2]; types=[Float16, Float64])  # a specific device and types
+```
+
+The test suite checks the table against `test_types` on whatever hardware it runs on, so running
+`Pkg.test("GPUSelect")` on a GPU also verifies the table for that backend.
 
 The queries live in package extensions that load together with the backend package, so they add
 no dependencies. `devices(:Lava)` is not supported yet.
