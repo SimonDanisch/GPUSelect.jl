@@ -145,6 +145,9 @@ Metal v1.12.1 device 1 supports: Float16, BFloat16, Float32, Int8, Int16, Int32,
 julia> GPUSelect.test_types(GPUSelect.devices()[2]; types=[Float16, Float64])  # a specific device and types
 ```
 
+`BFloat16` is tested only when BFloat16s.jl is loaded (`using BFloat16s`); CUDA, AMDGPU and Metal
+load it themselves, oneAPI does not.
+
 The test suite checks the table against `test_types` on whatever hardware it runs on, so running
 `Pkg.test("GPUSelect")` on a GPU also verifies the table for that backend.
 

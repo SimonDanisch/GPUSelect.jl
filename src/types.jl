@@ -21,7 +21,7 @@ kernels on a device. Types are given by name (`:Float64`, `:BFloat16`, …). Use
 | `supported`        | types that work                                                           |
 | `unsupported`      | `type => reason` for types that do not work                               |
 | `device_dependent` | `type => condition` for types that work on some devices only (table only) |
-| `unknown`          | types the table has no entry for (table only); use `test_types` for those |
+| `unknown`          | table: types without an entry, use `test_types` for those; `test_types`: types not tested (BFloat16 without BFloat16s.jl loaded) |
 """
 struct TypeSupport
     backend::String
@@ -45,7 +45,13 @@ function Base.show(io::IO, ::MIME"text/plain", ts::TypeSupport)
             print(io, "\n  ", T, " ", label, ": ", why)
         end
     end
-    isempty(ts.unknown) || print(io, "\n  unknown (run test_types to find out): ", join(ts.unknown, ", "))
+    if ts.device === nothing
+        isempty(ts.unknown) || print(io, "\n  unknown (run test_types to find out): ", join(ts.unknown, ", "))
+    else
+        for T in ts.unknown
+            print(io, "\n  ", T, " not tested", T === :BFloat16 ? ": run `using BFloat16s` first" : "")
+        end
+    end
 end
 
 # ---------------------------------------------------------------------------------------
@@ -59,9 +65,10 @@ struct TypeRule
     from::Union{VersionNumber,Nothing}      # first backend version the rule applies to
     until::Union{VersionNumber,Nothing}     # first version it no longer applies to
     note::String
+    crashes::Bool                           # trying the type kills the process, so test_types skips it
 end
-TypeRule(backend, types, status, note=""; from=nothing, until=nothing) =
-    TypeRule(backend, collect(Symbol, types), status, from, until, note)
+TypeRule(backend, types, status, note=""; from=nothing, until=nothing, crashes=false) =
+    TypeRule(backend, collect(Symbol, types), status, from, until, note, crashes)
 
 const INTS_8_64 = (:Int8, :Int16, :Int32, :Int64, :UInt8, :UInt16, :UInt32, :UInt64)
 const INTS_128 = (:Int128, :UInt128)
@@ -84,8 +91,9 @@ const TYPE_RULES = TypeRule[
     TypeRule("oneAPI", (:Float32, INTS_8_64...), :supported),
     TypeRule("oneAPI", (:Float16,), :device, "the device must report FP16 support"),
     TypeRule("oneAPI", (:Float64,), :device, "not on Intel Arc (Alchemist) and most integrated GPUs; available on Data Center GPU Max"),
+    TypeRule("oneAPI", (:BFloat16,), :unsupported, "kernel arithmetic does not compile (InvalidIRError)"; from=v"2.10.0"),   # checked on oneAPI.jl 2.10.0 (Max 1550)
     TypeRule("oneAPI", (:BFloat16,), :device, "the device must support the bfloat16 conversions extension"),
-    TypeRule("oneAPI", INTS_128, :unsupported, "SPIR-V has no 128-bit integers; the translator crashes on them"; from=v"2.10.0"),
+    TypeRule("oneAPI", INTS_128, :unsupported, "SPIR-V has no 128-bit integers; the translator crashes on them"; from=v"2.10.0", crashes=true),   # segfault in libllvm_spirv, checked on oneAPI.jl 2.10.0 (Max 1550)
 
     # KernelAbstractions 0.9 runs CPU kernels as native Julia code; 0.10 compiles them to SPIR-V for POCL.
     TypeRule("CPU", (:Float16, :Float32, :Float64, INTS_8_64...), :supported),
@@ -226,18 +234,35 @@ function probe_type(backend, ::Type{T}) where {T}
     return nothing
 end
 
+# One-line summary of an error. Compiler errors such as InvalidIRError put the cause on a
+# later "Reason:" line, after a long method signature, so prefer that line.
 function first_line(e)
-    line = first(split(strip(sprint(showerror, e)), '\n'))
+    lines = strip.(split(strip(sprint(showerror, e)), '\n'))
+    i = findfirst(l -> startswith(l, "Reason:"), lines)
+    line = i === nothing ? first(lines) : string(nameof(typeof(e)), ": ", strip(chopprefix(lines[i], "Reason:")))
     return length(line) > 200 ? first(line, 200) * "…" : String(line)
 end
 
-function type_support(mod::Module, device::Union{Int,Nothing}, types, skip_known::Bool)
+# Types whose test would crash the process with this backend version, with the reason.
+function crashing_types(backend, version)
+    out = Dict{Symbol,String}()
+    for T in TYPE_NAMES
+        i = findfirst(r -> T in r.types && rule_applies(r, backend, version), TYPE_RULES)
+        i !== nothing && TYPE_RULES[i].crashes && (out[T] = TYPE_RULES[i].note)
+    end
+    return out
+end
+
+function type_support(mod::Module, device::Union{Int,Nothing}, types, skip_crashing::Bool)
+    # BFloat16 is only testable with BFloat16s.jl loaded; say so instead of leaving it out.
+    untested = types === nothing && bfloat16_type() === nothing ? [:BFloat16] : Symbol[]
+    types = something(types, candidate_types())
     name = String(nameof(mod))
     label = mod === KernelAbstractions ? "CPU" : name
     version = pkgversion(mod)
     # Some unsupported types crash the compiler instead of raising an error (e.g. Int128 in
     # the SPIR-V translator), which no try/catch survives, so trust the table for those.
-    known_bad = skip_known ? Dict(known_types(label; version).unsupported) : Dict{Symbol,String}()
+    crashing = skip_crashing ? crashing_types(label, version) : Dict{Symbol,String}()
     backend = Base.invokelatest(getfield(mod, BACKEND_CONSTRUCTOR[name]))
     previous = nothing
     if device !== nothing
@@ -251,8 +276,8 @@ function type_support(mod::Module, device::Union{Int,Nothing}, types, skip_known
                                    Base.invokelatest(KernelAbstractions.device, backend) : 1)
         supported, unsupported = Symbol[], Pair{Symbol,String}[]
         for T in types
-            if haskey(known_bad, nameof(T))
-                push!(unsupported, nameof(T) => known_bad[nameof(T)] * " (from known_types; not tested)")
+            if haskey(crashing, nameof(T))
+                push!(unsupported, nameof(T) => crashing[nameof(T)] * " (from known_types; not tested)")
                 continue
             end
             if T === Float64 && !Base.invokelatest(KernelAbstractions.supports_float64, backend)
@@ -266,16 +291,16 @@ function type_support(mod::Module, device::Union{Int,Nothing}, types, skip_known
                 push!(unsupported, nameof(T) => first_line(e))
             end
         end
-        return TypeSupport(label, version, index, supported, unsupported, Pair{Symbol,String}[], Symbol[])
+        return TypeSupport(label, version, index, supported, unsupported, Pair{Symbol,String}[], untested)
     finally
         previous === nothing || Base.invokelatest(KernelAbstractions.device!, backend, previous)
     end
 end
 
 """
-    test_types(target::Symbol = :GPU; device=nothing, types=candidate_types(),
+    test_types(target::Symbol = :GPU; device=nothing, types=candidate_types(), skip_crashing=true,
                fallback=true, install=get_install_preference()) -> TypeSupport
-    test_types(d::DeviceInfo; types=candidate_types()) -> TypeSupport
+    test_types(d::DeviceInfo; types=candidate_types(), skip_crashing=true) -> TypeSupport
 
 Find out which element types a device supports by trying them. For every type in `types`
 this compiles and runs a small KernelAbstractions kernel that stores, multiplies, adds and
@@ -286,12 +311,17 @@ device, which [`known_types`](@ref) can only approximate. It loads the backend a
 few seconds, since each type compiles its own kernel, so use `known_types` when the table
 answers your question.
 
+BFloat16 is tested only when BFloat16s.jl is loaded (`using BFloat16s`); otherwise it is
+listed as not tested. CUDA, AMDGPU and Metal load it themselves, oneAPI does not.
+
 `device` is the 1-based device index (see [`devices`](@ref)); by default the current device
 is tested. `fallback` and `install` work as in `Backend()`.
 
-Types that `known_types` lists as unsupported for this backend version are not tested but
-reported with the table's reason, because some of them crash the compiler instead of failing
-with an error (e.g. `Int128` with oneAPI). Pass `skip_known=false` to test them anyway.
+A few types crash the compiler instead of failing with an error, which kills the Julia
+process (e.g. `Int128` with oneAPI). Types the table marks as crashing for this backend
+version are not tested but reported with the table's reason; pass `skip_crashing=false` to
+test them anyway. All other types are always tested, so a fix in a newer backend version
+shows up here before the table knows about it.
 
 ```julia
 julia> GPUSelect.test_types()
@@ -302,16 +332,16 @@ Metal v1.12.1 device 1 supports: Float16, BFloat16, Float32, Int8, Int16, Int32,
 ```
 """
 function test_types(target::Symbol = :GPU; device::Union{Int,Nothing} = nothing,
-                    types = candidate_types(), skip_known::Bool = true, fallback::Bool = true,
+                    types = nothing, skip_crashing::Bool = true, fallback::Bool = true,
                     install::Bool = get_install_preference())
     target === :Lava && error("GPUSelect.test_types does not support Lava yet.")
     mod = backend_module(target, install, fallback)
-    return type_support(mod, mod === KernelAbstractions ? nothing : device, types, skip_known)
+    return type_support(mod, mod === KernelAbstractions ? nothing : device, types, skip_crashing)
 end
 
-function test_types(d::DeviceInfo; types = candidate_types(), skip_known::Bool = true)
-    d.backend == "CPU" && return type_support(KernelAbstractions, nothing, types, skip_known)
+function test_types(d::DeviceInfo; types = nothing, skip_crashing::Bool = true)
+    d.backend == "CPU" && return type_support(KernelAbstractions, nothing, types, skip_crashing)
     haskey(BACKENDS, d.backend) || error("Unknown backend \"$(d.backend)\".")
     mod = Base.require(Base.PkgId(BACKENDS[d.backend], d.backend))
-    return type_support(mod, d.index, types, skip_known)
+    return type_support(mod, d.index, types, skip_crashing)
 end

@@ -152,14 +152,21 @@ end
         @test ts.version == pkgversion(KA)
         @test Float32 in ts && Int32 in ts && UInt8 in ts
         @test length(ts.supported) + length(ts.unsupported) == length(GPUSelect.candidate_types())
+        if GPUSelect.bfloat16_type() === nothing
+            @test ts.unknown == [:BFloat16]
+            @test occursin("using BFloat16s", sprint(show, MIME("text/plain"), ts))
+        end
         @test occursin("CPU", sprint(show, MIME("text/plain"), ts))
         @test GPUSelect.test_types(:CPU; types=[Float32]).supported == [:Float32]
         @test GPUSelect.test_types(only(GPUSelect.devices(:CPU)); types=[Int32]).supported == [:Int32]
         @test_throws Exception GPUSelect.test_types(:Lava)
         check_table(GPUSelect.known_types("CPU"), ts)
-        @test occursin("not tested", Dict(ts.unsupported)[:Int128]) == (:Int128 in first.(GPUSelect.known_types("CPU").unsupported))
-        @test haskey(Dict(GPUSelect.test_types(:CPU; types=[Int128], skip_known=false).unsupported), :Int128) ==
-              !(Int128 in GPUSelect.known_types("CPU"))
+@test !occursin("not tested", Dict(ts.unsupported)[:Int128])   # fails with an error, so it is tested
+        @test GPUSelect.crashing_types("oneAPI", v"2.10.0") |> keys |> collect |> sort == [:Int128, :UInt128]
+        @test isempty(GPUSelect.crashing_types("Metal", nothing))
+        @test GPUSelect.first_line(ErrorException("Some header\nReason: unsupported call\nmore")) ==
+              "ErrorException: unsupported call"
+        @test GPUSelect.first_line(ErrorException("plain message")) == "plain message"
 
         bs = GPUSelect.installed_backends()
         if any(n -> n ∈ GPUSelect.GPU_BACKENDS, bs)
